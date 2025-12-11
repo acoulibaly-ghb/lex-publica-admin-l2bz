@@ -1,0 +1,7 @@
+{
+  "name": "Professeur Droit Public IA",
+  "description": "Assistant pédagogique interactif pour les étudiants en droit public, capable de générer des quiz et de répondre aux questions via texte et voix.",
+  "requestFramePermissions": [
+    "microphone"
+  ]
+}
