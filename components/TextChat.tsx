@@ -163,7 +163,7 @@ export const TextChat: React.FC<TextChatProps> = ({ courseContent, systemInstruc
                             À propos de l'assistant
                         </h4>
                         <p className="text-sm text-slate-600 dark:text-slate-400 leading-relaxed">
-                            Cette IA est programmée pour répondre aux questions <strong>exclusivement basées sur le cours de Droit Public</strong> fourni par votre professeur. Elle ne répondra pas aux questions hors sujet.
+                            Cette IA est programmée pour répondre aux questions <strong>exclusivement basées sur le cours de Droit administratif</strong> fourni par votre professeur. Elle ne répondra pas aux questions hors sujet.
                         </p>
                     </section>
 
