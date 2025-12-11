@@ -26,20 +26,14 @@ export const TextChat: React.FC<TextChatProps> = ({ courseContent, systemInstruc
 
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
-  const [isSidebarOpen, setIsSidebarOpen] = useState(true);
+  // Default to false (closed) for all screens
+  const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [isHelpOpen, setIsHelpOpen] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   // Rename state
   const [editingSessionId, setEditingSessionId] = useState<string | null>(null);
   const [editTitleInput, setEditTitleInput] = useState('');
-
-  // Adjust sidebar default based on screen size on mount
-  useEffect(() => {
-    if (window.innerWidth < 768) {
-      setIsSidebarOpen(false);
-    }
-  }, []);
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -129,16 +123,12 @@ export const TextChat: React.FC<TextChatProps> = ({ courseContent, systemInstruc
 
   const handleSessionSelect = (id: string) => {
     setActiveSessionId(id);
-    if (window.innerWidth < 768) {
-        setIsSidebarOpen(false);
-    }
+    setIsSidebarOpen(false);
   };
 
   const handleNewSession = () => {
     createNewSession();
-    if (window.innerWidth < 768) {
-        setIsSidebarOpen(false);
-    }
+    setIsSidebarOpen(false);
   };
 
   return (
@@ -229,27 +219,25 @@ export const TextChat: React.FC<TextChatProps> = ({ courseContent, systemInstruc
         </div>
       )}
 
-      {/* Mobile Sidebar Overlay Backdrop */}
+      {/* Sidebar Overlay Backdrop - Active on both Mobile and Desktop when open */}
       {isSidebarOpen && (
         <div 
-            className="absolute inset-0 bg-black/30 z-20 md:hidden backdrop-blur-sm"
+            className="absolute inset-0 bg-black/30 z-20 backdrop-blur-sm"
             onClick={() => setIsSidebarOpen(false)}
         />
       )}
 
-      {/* Unified Sidebar Container */}
+      {/* Unified Sidebar Container - Absolute Positioning for Overlay Effect on ALL screens */}
       <div className={`
-        absolute inset-y-0 left-0 z-30 flex flex-col
+        absolute inset-y-0 left-0 z-30 flex flex-col w-72
         bg-slate-50 dark:bg-slate-950 border-r border-slate-200 dark:border-slate-800
-        transition-all duration-300 ease-in-out
-        ${isSidebarOpen ? 'translate-x-0' : '-translate-x-full md:translate-x-0'}
-        ${isSidebarOpen ? 'md:w-72' : 'md:w-0 md:border-r-0'}
-        md:relative md:overflow-hidden
+        transition-transform duration-300 ease-in-out shadow-2xl
+        ${isSidebarOpen ? 'translate-x-0' : '-translate-x-full'}
       `}>
-        {/* Inner Sidebar Content - Fixed Width for robustness */}
-        <div className="w-72 flex flex-col h-full bg-slate-50 dark:bg-slate-950">
+        {/* Inner Sidebar Content */}
+        <div className="flex flex-col h-full bg-slate-50 dark:bg-slate-950">
             <div className="p-4 border-b border-slate-200 dark:border-slate-800 flex flex-col gap-4">
-                <div className="flex items-center justify-between md:hidden">
+                <div className="flex items-center justify-between">
                     <h3 className="font-serif font-bold text-slate-800 dark:text-white">Historique</h3>
                     <button onClick={() => setIsSidebarOpen(false)} className="p-2 text-slate-500 hover:bg-slate-200 dark:hover:bg-slate-800 rounded-lg">
                         <PanelLeftClose size={20} />
@@ -331,18 +319,10 @@ export const TextChat: React.FC<TextChatProps> = ({ courseContent, systemInstruc
                     </div>
                 )}
             </div>
-
-            {/* Sidebar Footer with Help - Fixed at bottom */}
-            <div className="p-3 border-t border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 flex-shrink-0">
-                <button 
-                    onClick={() => setIsHelpOpen(true)}
-                    className="group w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-slate-600 dark:text-slate-400 hover:bg-white dark:hover:bg-slate-900 hover:shadow-sm transition-all text-sm font-medium"
-                >
-                    <div className="p-1.5 bg-amber-100 dark:bg-amber-900/30 rounded-lg text-amber-600 dark:text-amber-500 group-hover:bg-amber-200 dark:group-hover:bg-amber-800/50 group-hover:text-amber-700 dark:group-hover:text-amber-400 transition-colors">
-                        <Lightbulb size={18} className="fill-amber-600/20" />
-                    </div>
-                    <span>Aide & Ressources</span>
-                </button>
+            
+            {/* Sidebar Footer - Kept simple now since Help is in header */}
+            <div className="p-3 border-t border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 flex-shrink-0 text-center">
+                 <p className="text-[10px] text-slate-400">Assistant Droit Public</p>
             </div>
         </div>
       </div>
@@ -350,23 +330,34 @@ export const TextChat: React.FC<TextChatProps> = ({ courseContent, systemInstruc
       {/* Main Chat Area */}
       <div className="flex-1 flex flex-col min-w-0 bg-slate-50/50 dark:bg-slate-950 relative">
           
-          {/* Unified Header */}
-          <div className="p-4 border-b border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 flex items-center gap-3 shadow-sm z-10 sticky top-0 transition-colors">
-              <button 
-                onClick={() => setIsSidebarOpen(!isSidebarOpen)}
-                className="p-2 -ml-2 text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg focus:outline-none"
-                title={isSidebarOpen ? "Fermer le menu" : "Ouvrir le menu"}
-              >
-                {isSidebarOpen ? <PanelLeftClose size={20} /> : <PanelLeft size={20} />}
-              </button>
-              <div className="flex flex-col overflow-hidden">
-                <span className="font-semibold text-slate-800 dark:text-white truncate leading-tight">
-                    {activeSession?.title || 'Droit Public IA'}
-                </span>
-                <span className="text-xs text-slate-400 truncate hidden md:block">
-                    {activeSession ? 'Historique actif' : 'Nouvelle session'}
-                </span>
+          {/* Unified Header with Help Button */}
+          <div className="p-4 border-b border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 flex items-center justify-between shadow-sm z-10 sticky top-0 transition-colors">
+              <div className="flex items-center gap-3">
+                <button 
+                    onClick={() => setIsSidebarOpen(!isSidebarOpen)}
+                    className="p-2 -ml-2 text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg focus:outline-none"
+                    title={isSidebarOpen ? "Fermer le menu" : "Ouvrir le menu"}
+                >
+                    {isSidebarOpen ? <PanelLeftClose size={20} /> : <PanelLeft size={20} />}
+                </button>
+                <div className="flex flex-col overflow-hidden">
+                    <span className="font-semibold text-slate-800 dark:text-white truncate leading-tight">
+                        {activeSession?.title || 'Droit Public IA'}
+                    </span>
+                    <span className="text-xs text-slate-400 truncate hidden md:block">
+                        {activeSession ? 'Historique actif' : 'Nouvelle session'}
+                    </span>
+                </div>
               </div>
+
+              {/* Added Help Button Here */}
+              <button 
+                  onClick={() => setIsHelpOpen(true)}
+                  className="p-2 text-slate-500 hover:text-amber-600 dark:text-slate-400 dark:hover:text-amber-400 hover:bg-amber-50 dark:hover:bg-amber-900/20 rounded-lg transition-colors"
+                  title="Aide & Ressources"
+              >
+                  <Lightbulb size={20} />
+              </button>
           </div>
 
           <div className="flex-1 overflow-y-auto p-4 md:p-6 space-y-6 bg-slate-50 dark:bg-slate-950 scrollbar-thumb-slate-200 dark:scrollbar-thumb-slate-700">
