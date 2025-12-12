@@ -2603,7 +2603,7 @@ STYLE ET FORMAT (Optimisé pour la lecture et l'écoute) :
   - Commence par une réponse directe.
   - Utilise des ### Titres pour séparer les arguments.
   - N'utilise JAMAIS de niveau 4 (####) ou 5 (#####).
-  - Utilise des listes à puces (-) pour les conditions ou critères.
+  - Utilise des listes à puces pour les conditions ou critères.
   - Mets en **gras** les mots-clés juridiques importants.
 
 CAPACITÉS SPÉCIFIQUES :
