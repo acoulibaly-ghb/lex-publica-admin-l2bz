@@ -102,12 +102,12 @@ const App = () => {
             <div className="w-10 h-10 bg-blue-600 rounded-lg flex items-center justify-center text-white shrink-0 shadow-lg shadow-blue-900/50">
                 <GraduationCap size={24} />
             </div>
-            <span className="font-montserrat font-bold text-xl text-white hidden md:block tracking-wide">Droit Public IA</span>
+            <span className="font-montserrat font-bold text-xl text-white hidden md:block tracking-wide">Droit Public</span>
         </div>
 
         <nav className="flex-1 p-4 space-y-2">
             <div className="px-4 py-2 text-xs font-semibold text-slate-500 uppercase tracking-wider hidden md:block">
-                Espace Étudiant
+                Espace public
             </div>
             <button 
                 onClick={() => setActiveMode(AppMode.TEXT)}
