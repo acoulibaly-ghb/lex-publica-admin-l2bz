@@ -435,15 +435,15 @@ export const TextChat: React.FC<TextChatProps> = ({ courseContent, systemInstruc
                     onChange={(e) => setInput(e.target.value)}
                     onKeyDown={(e) => e.key === 'Enter' && sendMessage(input)}
                     placeholder="Posez une question sur le cours..."
-                    className="w-full pl-4 pr-12 py-3.5 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500/50 focus:bg-white dark:focus:bg-slate-800 transition-all text-slate-800 dark:text-slate-100 placeholder:text-slate-400 dark:placeholder:text-slate-500"
+                    className="w-full pl-5 pr-14 py-4 bg-white dark:bg-slate-800 border-2 border-slate-300 dark:border-slate-700 rounded-2xl focus:outline-none focus:border-blue-600 focus:ring-4 focus:ring-blue-500/10 transition-all text-slate-800 dark:text-slate-100 placeholder:text-slate-500 shadow-md text-base"
                     disabled={isLoading || !activeSessionId}
                 />
                 <button 
                     onClick={() => sendMessage(input)}
                     disabled={!input.trim() || isLoading || !activeSessionId}
-                    className="absolute right-2 p-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:hover:bg-blue-600 transition-colors"
+                    className="absolute right-3 p-2 bg-blue-600 text-white rounded-xl hover:bg-blue-700 disabled:opacity-50 disabled:hover:bg-blue-600 transition-colors shadow-sm"
                 >
-                    <Send size={18} />
+                    <Send size={20} />
                 </button>
             </div>
           </div>
