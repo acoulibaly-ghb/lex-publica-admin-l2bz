@@ -1,6 +1,6 @@
 
-import React, { useState } from 'react';
-import { Save, FileText, Upload, Bot, Book, Info } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { Save, FileText, Upload, Bot, Book, Info, Check, Loader2 } from 'lucide-react';
 
 interface CourseEditorProps {
   initialContent: string;
@@ -22,34 +22,50 @@ export const CourseEditor: React.FC<CourseEditorProps> = ({
   const [content, setContent] = useState(initialContent);
   const [instruction, setInstruction] = useState(initialInstruction);
   
-  const [isContentSaved, setIsContentSaved] = useState(true);
-  const [isInstructionSaved, setIsInstructionSaved] = useState(true);
+  const [isSavingContent, setIsSavingContent] = useState(false);
+  const [isSavingInstruction, setIsSavingInstruction] = useState(false);
+
+  // Sync internal state if props change externally (though typically driven by this component)
+  // This helps if the parent updates the content via other means, but mainly ensures sync after save
+  useEffect(() => {
+    // Only update if the prop is different and we aren't currently editing (to avoid cursor jumps if possible, 
+    // though here we assume prop updates come from our own saves mostly)
+    if (initialContent !== content && !isSavingContent) {
+        // We don't forcefully overwrite state to avoid losing typing if a race condition occurred,
+        // but typically in this architecture, local state leads.
+    }
+  }, [initialContent]);
+
+  // Auto-save for Content
+  useEffect(() => {
+    if (content === initialContent) return;
+
+    setIsSavingContent(true);
+    const timer = setTimeout(() => {
+      onSaveContent(content);
+      setIsSavingContent(false);
+    }, 1500); // 1.5s debounce
+
+    return () => clearTimeout(timer);
+  }, [content, initialContent, onSaveContent]);
+
+  // Auto-save for Instruction
+  useEffect(() => {
+    if (instruction === initialInstruction) return;
+
+    setIsSavingInstruction(true);
+    const timer = setTimeout(() => {
+      onSaveInstruction(instruction);
+      setIsSavingInstruction(false);
+    }, 1500); // 1.5s debounce
+
+    return () => clearTimeout(timer);
+  }, [instruction, initialInstruction, onSaveInstruction]);
 
   // Stats for Content
   const charCount = content.length;
   const wordCount = content.split(/\s+/).filter(w => w.length > 0).length;
   const estimatedPages = Math.ceil(wordCount / 500); // approx 500 words per page
-
-  const handleSaveContent = () => {
-    onSaveContent(content);
-    setIsContentSaved(true);
-    setTimeout(() => setIsContentSaved(false), 2000); // Using boolean to trigger ephemeral state logic if needed, but mainly for button feedback
-  };
-
-  const handleSaveInstruction = () => {
-    onSaveInstruction(instruction);
-    setIsInstructionSaved(true);
-  };
-
-  const handleContentChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
-    setContent(e.target.value);
-    setIsContentSaved(false);
-  };
-
-  const handleInstructionChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
-    setInstruction(e.target.value);
-    setIsInstructionSaved(false);
-  };
 
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -59,7 +75,7 @@ export const CourseEditor: React.FC<CourseEditorProps> = ({
     reader.onload = (event) => {
       const text = event.target?.result as string;
       setContent(text);
-      setIsContentSaved(false);
+      // Auto-save will trigger via useEffect
     };
     reader.readAsText(file);
   };
@@ -106,24 +122,34 @@ export const CourseEditor: React.FC<CourseEditorProps> = ({
                     <span className="bg-slate-100 dark:bg-slate-800 px-2 py-1 rounded"><strong>{wordCount.toLocaleString()}</strong> mots</span>
                     <span className="bg-slate-100 dark:bg-slate-800 px-2 py-1 rounded">~ <strong>{estimatedPages}</strong> pages</span>
                  </div>
-                 <div className="flex gap-2">
+                 <div className="flex gap-2 items-center">
                     <label className="flex items-center gap-2 px-3 py-1.5 bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-lg hover:bg-slate-50 dark:hover:bg-slate-700 cursor-pointer text-slate-700 dark:text-slate-300 text-sm transition-colors">
                         <Upload size={16} />
                         <span>Importer (.txt)</span>
                         <input type="file" accept=".txt,.md" onChange={handleFileUpload} className="hidden" />
                     </label>
-                    <button 
-                        onClick={handleSaveContent}
-                        disabled={isContentSaved && content === initialContent}
-                        className={`flex items-center gap-2 px-4 py-1.5 rounded-lg text-sm font-medium transition-colors ${
-                            isContentSaved && content === initialContent
-                            ? 'bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400 cursor-default'
-                            : 'bg-blue-600 hover:bg-blue-700 text-white shadow-lg shadow-blue-600/20'
-                        }`}
-                    >
-                        <Save size={16} />
-                        {isContentSaved && content === initialContent ? 'Enregistré' : 'Enregistrer le Cours'}
-                    </button>
+                    
+                    <div className={`flex items-center gap-2 px-4 py-1.5 rounded-lg text-sm font-medium transition-all ${
+                        isSavingContent 
+                        ? 'bg-blue-50 text-blue-600 dark:bg-blue-900/30 dark:text-blue-400' 
+                        : content !== initialContent
+                            ? 'bg-amber-50 text-amber-600 dark:bg-amber-900/30 dark:text-amber-400'
+                            : 'bg-green-50 text-green-600 dark:bg-green-900/30 dark:text-green-400'
+                    }`}>
+                        {isSavingContent ? (
+                            <>
+                                <Loader2 size={16} className="animate-spin" />
+                                <span>Enregistrement...</span>
+                            </>
+                        ) : content !== initialContent ? (
+                            <span>Modifications en cours...</span>
+                        ) : (
+                            <>
+                                <Check size={16} />
+                                <span>À jour</span>
+                            </>
+                        )}
+                    </div>
                  </div>
                </div>
 
@@ -131,14 +157,15 @@ export const CourseEditor: React.FC<CourseEditorProps> = ({
                <div className="flex items-start gap-2 p-3 bg-blue-50 dark:bg-blue-900/20 border border-blue-100 dark:border-blue-800/50 rounded-lg text-xs text-blue-800 dark:text-blue-300">
                   <Info size={14} className="mt-0.5 shrink-0 text-blue-500 dark:text-blue-400" />
                   <p>
-                    <strong>Conseil technique :</strong> Privilégiez le <strong>texte brut</strong> (.txt) plutôt que le PDF pour une rapidité et une précision maximales. L'IA analyse le texte brut instantanément sans risque d'erreur de lecture. Si vous avez plusieurs cours, séparez-les par des titres en majuscules.
+                    <strong>Sauvegarde automatique activée.</strong> Le texte est enregistré automatiquement lorsque vous arrêtez de taper. 
+                    <br/>Conseil : Pour des cours volumineux, copiez-collez par sections si nécessaire, ou importez un fichier .txt.
                   </p>
                </div>
             </div>
 
             <textarea 
                 value={content}
-                onChange={handleContentChange}
+                onChange={(e) => setContent(e.target.value)}
                 spellCheck={false}
                 className="flex-1 w-full p-4 resize-none border border-slate-200 dark:border-slate-800 rounded-lg focus:outline-none focus:ring-2 focus:ring-inset focus:ring-blue-500/50 text-slate-700 dark:text-slate-200 leading-relaxed font-mono text-sm bg-white dark:bg-slate-950 transition-colors placeholder:text-slate-400 dark:placeholder:text-slate-600"
                 placeholder="Collez ici l'intégralité du cours de droit (copiez-collez votre texte ou importez un fichier .txt)..."
@@ -153,29 +180,39 @@ export const CourseEditor: React.FC<CourseEditorProps> = ({
                <div className="text-sm text-slate-500 dark:text-slate-400">
                   <p>Définissez ici la personnalité et les règles pédagogiques de l'IA.</p>
                </div>
-               <button 
-                    onClick={handleSaveInstruction}
-                    disabled={isInstructionSaved && instruction === initialInstruction}
-                    className={`flex items-center gap-2 px-4 py-1.5 rounded-lg text-sm font-medium transition-colors ${
-                        isInstructionSaved && instruction === initialInstruction
-                        ? 'bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400 cursor-default'
-                        : 'bg-purple-600 hover:bg-purple-700 text-white shadow-lg shadow-purple-600/20'
-                    }`}
-                >
-                    <Save size={16} />
-                    {isInstructionSaved && instruction === initialInstruction ? 'Enregistré' : 'Enregistrer les Instructions'}
-                </button>
+               
+               <div className={`flex items-center gap-2 px-4 py-1.5 rounded-lg text-sm font-medium transition-all ${
+                    isSavingInstruction 
+                    ? 'bg-purple-50 text-purple-600 dark:bg-purple-900/30 dark:text-purple-400' 
+                    : instruction !== initialInstruction
+                        ? 'bg-amber-50 text-amber-600 dark:bg-amber-900/30 dark:text-amber-400'
+                        : 'bg-green-50 text-green-600 dark:bg-green-900/30 dark:text-green-400'
+                }`}>
+                    {isSavingInstruction ? (
+                        <>
+                            <Loader2 size={16} className="animate-spin" />
+                            <span>Enregistrement...</span>
+                        </>
+                    ) : instruction !== initialInstruction ? (
+                        <span>Modifications en cours...</span>
+                    ) : (
+                        <>
+                            <Check size={16} />
+                            <span>À jour</span>
+                        </>
+                    )}
+                </div>
             </div>
             <div className="flex-1 relative">
                 <textarea 
                     value={instruction}
-                    onChange={handleInstructionChange}
+                    onChange={(e) => setInstruction(e.target.value)}
                     className="w-full h-full p-4 resize-none border border-slate-200 dark:border-slate-800 rounded-lg focus:outline-none focus:ring-2 focus:ring-inset focus:ring-purple-500/50 text-slate-700 dark:text-slate-200 leading-relaxed font-mono text-sm bg-white dark:bg-slate-950 transition-colors placeholder:text-slate-400 dark:placeholder:text-slate-600"
                     placeholder="Vous êtes un professeur..."
                 />
             </div>
             <div className="mt-4 p-4 bg-slate-50 dark:bg-slate-800/50 rounded-lg border border-slate-200 dark:border-slate-800 text-xs text-slate-500 dark:text-slate-400">
-                <strong>Note :</strong> Le contenu du cours (onglet précédent) sera automatiquement ajouté à la fin de ces instructions lors de l'interaction avec les étudiants. Vous n'avez pas besoin de le copier-coller ici.
+                <strong>Note :</strong> La sauvegarde est également automatique ici.
             </div>
           </div>
         )}
