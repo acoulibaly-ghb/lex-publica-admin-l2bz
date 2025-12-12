@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect } from 'react';
-import { Save, FileText, Upload, Bot, Book, Info, Check, Loader2, Download, UploadCloud, RefreshCw } from 'lucide-react';
+import { Save, FileText, Upload, Bot, Book, Info, Check, Loader2, Download, UploadCloud, RefreshCw, FileCode, Code } from 'lucide-react';
 
 interface CourseEditorProps {
   initialContent: string;
@@ -129,36 +129,87 @@ export const CourseEditor: React.FC<CourseEditorProps> = ({
     e.target.value = '';
   };
 
+  // NEW: Generate constants.ts file for developer/deployment
+  const handleGenerateCode = () => {
+    // Escape backticks to prevent syntax errors in the generated TS file
+    const safeContent = content.replace(/`/g, '\\`').replace(/\${/g, '\\${');
+    const safeInstruction = instruction.replace(/`/g, '\\`').replace(/\${/g, '\\${');
+
+    const fileContent = `
+export const DEFAULT_COURSE_CONTENT = \`${safeContent}\`;
+
+export const DEFAULT_SYSTEM_INSTRUCTION = \`${safeInstruction}\`;
+`.trim();
+
+    const blob = new Blob([fileContent], { type: 'text/typescript' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'constants.ts';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  };
+
   return (
-    <div className="flex flex-col h-full max-w-5xl mx-auto w-full transition-colors">
+    <div className="flex flex-col h-full max-w-5xl mx-auto w-full transition-colors pb-10">
       
       {/* Transfert de données / Backup Section */}
-      <div className="mb-6 p-4 bg-slate-50 dark:bg-slate-900/50 border border-slate-200 dark:border-slate-800 rounded-xl flex flex-col md:flex-row items-center justify-between gap-4 animate-in fade-in slide-in-from-top-4">
-        <div className="flex items-center gap-3">
-            <div className="p-2 bg-blue-100 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400 rounded-lg">
-                <RefreshCw size={20} />
+      <div className="mb-6 p-4 bg-slate-50 dark:bg-slate-900/50 border border-slate-200 dark:border-slate-800 rounded-xl flex flex-col items-stretch gap-4 animate-in fade-in slide-in-from-top-4">
+        
+        {/* Top Row: Backup & Restore */}
+        <div className="flex flex-col md:flex-row items-center justify-between gap-4">
+            <div className="flex items-center gap-3 self-start md:self-center">
+                <div className="p-2 bg-blue-100 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400 rounded-lg">
+                    <RefreshCw size={20} />
+                </div>
+                <div>
+                    <h3 className="font-semibold text-slate-800 dark:text-white text-sm">Sauvegarde & Transfert</h3>
+                    <p className="text-xs text-slate-500 dark:text-slate-400">Pour transférer votre cours d'un navigateur à l'autre.</p>
+                </div>
             </div>
-            <div>
-                <h3 className="font-semibold text-slate-800 dark:text-white text-sm">Sauvegarde & Transfert</h3>
-                <p className="text-xs text-slate-500 dark:text-slate-400">Pour transférer votre cours d'un navigateur à l'autre (ex: Edge vers Chrome).</p>
+            
+            <div className="flex items-center gap-3 w-full md:w-auto">
+                <button 
+                    onClick={handleExportConfig}
+                    className="flex-1 md:flex-none flex items-center justify-center gap-2 px-4 py-2 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 text-sm font-medium rounded-lg transition-colors shadow-sm"
+                    title="Télécharger une copie de sauvegarde"
+                >
+                    <Download size={16} />
+                    <span>Exporter</span>
+                </button>
+                
+                <label className="flex-1 md:flex-none flex items-center justify-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium rounded-lg transition-colors shadow-sm cursor-pointer">
+                    <UploadCloud size={16} />
+                    <span>Restaurer</span>
+                    <input type="file" accept=".json" onChange={handleImportConfig} className="hidden" />
+                </label>
             </div>
         </div>
-        
-        <div className="flex items-center gap-3 w-full md:w-auto">
+
+        {/* Separator */}
+        <div className="h-px bg-slate-200 dark:bg-slate-800 w-full"></div>
+
+        {/* Bottom Row: Generate Code for Deployment */}
+        <div className="flex flex-col md:flex-row items-center justify-between gap-4">
+            <div className="flex items-center gap-3 self-start md:self-center">
+                <div className="p-2 bg-indigo-100 dark:bg-indigo-900/30 text-indigo-600 dark:text-indigo-400 rounded-lg">
+                    <Code size={20} />
+                </div>
+                <div>
+                    <h3 className="font-semibold text-slate-800 dark:text-white text-sm">Déploiement Étudiants</h3>
+                    <p className="text-xs text-slate-500 dark:text-slate-400">Générez le fichier "constants.ts" pour intégrer définitivement ce cours à l'application.</p>
+                </div>
+            </div>
+
             <button 
-                onClick={handleExportConfig}
-                className="flex-1 md:flex-none flex items-center justify-center gap-2 px-4 py-2 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 text-sm font-medium rounded-lg transition-colors shadow-sm"
-                title="Télécharger une copie de sauvegarde"
+                onClick={handleGenerateCode}
+                className="w-full md:w-auto flex items-center justify-center gap-2 px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-medium rounded-lg transition-colors shadow-sm"
             >
-                <Download size={16} />
-                <span>Exporter</span>
+                <FileCode size={16} />
+                <span>Télécharger constants.ts</span>
             </button>
-            
-            <label className="flex-1 md:flex-none flex items-center justify-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium rounded-lg transition-colors shadow-sm cursor-pointer">
-                <UploadCloud size={16} />
-                <span>Restaurer</span>
-                <input type="file" accept=".json" onChange={handleImportConfig} className="hidden" />
-            </label>
         </div>
         
         {importStatus && (
