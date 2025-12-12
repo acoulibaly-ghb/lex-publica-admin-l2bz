@@ -1,3 +1,4 @@
+
 import { Blob } from '@google/genai';
 
 export function base64ToUint8Array(base64: string): Uint8Array {
@@ -37,6 +38,39 @@ export async function decodeAudioData(
     }
   }
   return buffer;
+}
+
+/**
+ * Downsamples audio buffer from input rate (e.g. 44100Hz) to target rate (16000Hz)
+ */
+export function downsampleBuffer(buffer: Float32Array, inputRate: number, targetRate: number): Float32Array {
+  if (inputRate === targetRate) {
+    return buffer;
+  }
+  if (inputRate < targetRate) {
+    throw new Error("Upsampling is not supported");
+  }
+  
+  const sampleRateRatio = inputRate / targetRate;
+  const newLength = Math.round(buffer.length / sampleRateRatio);
+  const result = new Float32Array(newLength);
+  let offsetResult = 0;
+  let offsetBuffer = 0;
+  
+  while (offsetResult < result.length) {
+    const nextOffsetBuffer = Math.round((offsetResult + 1) * sampleRateRatio);
+    // Use average value of skipped samples to prevent aliasing (simple low-pass filter effect)
+    let accum = 0, count = 0;
+    for (let i = offsetBuffer; i < nextOffsetBuffer && i < buffer.length; i++) {
+      accum += buffer[i];
+      count++;
+    }
+    result[offsetResult] = count !== 0 ? accum / count : 0;
+    offsetResult++;
+    offsetBuffer = nextOffsetBuffer;
+  }
+  
+  return result;
 }
 
 export function createPcmBlob(data: Float32Array): Blob {
