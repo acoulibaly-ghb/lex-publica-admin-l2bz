@@ -1,11 +1,10 @@
 
 import React, { useState, useRef, useEffect } from 'react';
-import { Send, Bot, User, Loader2, Sparkles, BookOpen, CheckCircle, HelpCircle, Plus, MessageSquare, Trash2, Edit2, X, Check, PanelLeftClose, PanelLeft, Lightbulb, Info, ExternalLink, AlertTriangle } from 'lucide-react';
+import { Send, Bot, User, Loader2, Sparkles, BookOpen, CheckCircle, HelpCircle, Plus, MessageSquare, Trash2, Edit2, X, Check, PanelLeftClose, PanelLeft, Lightbulb, ExternalLink } from 'lucide-react';
 import { GoogleGenAI } from '@google/genai';
 import ReactMarkdown from 'react-markdown';
 import { ChatMessage } from '../types';
 import { useChatStore } from '../hooks/useChatStore';
-import { DEFAULT_COURSE_CONTENT } from '../constants';
 
 interface TextChatProps {
   courseContent: string;
@@ -35,10 +34,6 @@ export const TextChat: React.FC<TextChatProps> = ({ courseContent, systemInstruc
   // Rename state
   const [editingSessionId, setEditingSessionId] = useState<string | null>(null);
   const [editTitleInput, setEditTitleInput] = useState('');
-
-  // Course Status Check
-  const isDefaultContent = courseContent === DEFAULT_COURSE_CONTENT;
-  const [showContentWarning, setShowContentWarning] = useState(true);
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -366,21 +361,7 @@ export const TextChat: React.FC<TextChatProps> = ({ courseContent, systemInstruc
           </div>
 
           <div className="flex-1 overflow-y-auto p-4 md:p-6 space-y-6 bg-slate-50 dark:bg-slate-950 scrollbar-thumb-slate-200 dark:scrollbar-thumb-slate-700">
-            {isDefaultContent && showContentWarning && (
-                <div className="bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800/50 rounded-lg p-4 flex items-start gap-3 relative animate-in fade-in slide-in-from-top-2">
-                    <AlertTriangle size={20} className="text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />
-                    <div className="flex-1">
-                        <p className="text-sm font-medium text-amber-800 dark:text-amber-300">Mode Démonstration</p>
-                        <p className="text-sm text-amber-700 dark:text-amber-400 mt-1">
-                            L'IA utilise actuellement le cours d'exemple. Pour que l'IA réponde sur VOS cours, allez dans "Gérer le Cours" et collez votre contenu.
-                        </p>
-                    </div>
-                    <button onClick={() => setShowContentWarning(false)} className="text-amber-500 hover:text-amber-700 dark:text-amber-500/50 dark:hover:text-amber-300">
-                        <X size={16} />
-                    </button>
-                </div>
-            )}
-
+            
             {!activeSession ? (
                 <div className="flex flex-col items-center justify-center h-full text-slate-400">
                     <MessageSquare size={48} className="mb-4 opacity-20" />
