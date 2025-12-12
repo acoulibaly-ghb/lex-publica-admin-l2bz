@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect } from 'react';
-import { Save, FileText, Upload, Bot, Book, Info, Check, Loader2 } from 'lucide-react';
+import { Save, FileText, Upload, Bot, Book, Info, Check, Loader2, Download, UploadCloud, RefreshCw } from 'lucide-react';
 
 interface CourseEditorProps {
   initialContent: string;
@@ -24,15 +24,12 @@ export const CourseEditor: React.FC<CourseEditorProps> = ({
   
   const [isSavingContent, setIsSavingContent] = useState(false);
   const [isSavingInstruction, setIsSavingInstruction] = useState(false);
+  const [importStatus, setImportStatus] = useState<string | null>(null);
 
-  // Sync internal state if props change externally (though typically driven by this component)
-  // This helps if the parent updates the content via other means, but mainly ensures sync after save
+  // Sync internal state if props change externally
   useEffect(() => {
-    // Only update if the prop is different and we aren't currently editing (to avoid cursor jumps if possible, 
-    // though here we assume prop updates come from our own saves mostly)
     if (initialContent !== content && !isSavingContent) {
-        // We don't forcefully overwrite state to avoid losing typing if a race condition occurred,
-        // but typically in this architecture, local state leads.
+        // Optional: logic to sync if needed, mostly handled by local state
     }
   }, [initialContent]);
 
@@ -67,7 +64,7 @@ export const CourseEditor: React.FC<CourseEditorProps> = ({
   const wordCount = content.split(/\s+/).filter(w => w.length > 0).length;
   const estimatedPages = Math.ceil(wordCount / 500); // approx 500 words per page
 
-  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleTextFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
@@ -80,11 +77,99 @@ export const CourseEditor: React.FC<CourseEditorProps> = ({
     reader.readAsText(file);
   };
 
+  // NEW: Full Configuration Export
+  const handleExportConfig = () => {
+    const configData = {
+        title: "Droit Public IA - Configuration Backup",
+        date: new Date().toISOString(),
+        courseContent: content,
+        systemInstruction: instruction
+    };
+
+    const blob = new Blob([JSON.stringify(configData, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `cours-droit-backup-${new Date().toISOString().slice(0, 10)}.json`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  };
+
+  // NEW: Full Configuration Import
+  const handleImportConfig = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      try {
+        const json = JSON.parse(event.target?.result as string);
+        
+        if (json.courseContent) {
+            setContent(json.courseContent);
+            onSaveContent(json.courseContent);
+        }
+        if (json.systemInstruction) {
+            setInstruction(json.systemInstruction);
+            onSaveInstruction(json.systemInstruction);
+        }
+        setImportStatus("Configuration restaurée avec succès !");
+        setTimeout(() => setImportStatus(null), 3000);
+      } catch (err) {
+        console.error("Erreur import", err);
+        setImportStatus("Erreur : Fichier invalide.");
+        setTimeout(() => setImportStatus(null), 3000);
+      }
+    };
+    reader.readAsText(file);
+    // Reset input value to allow re-importing same file if needed
+    e.target.value = '';
+  };
+
   return (
     <div className="flex flex-col h-full max-w-5xl mx-auto w-full transition-colors">
       
+      {/* Transfert de données / Backup Section */}
+      <div className="mb-6 p-4 bg-slate-50 dark:bg-slate-900/50 border border-slate-200 dark:border-slate-800 rounded-xl flex flex-col md:flex-row items-center justify-between gap-4 animate-in fade-in slide-in-from-top-4">
+        <div className="flex items-center gap-3">
+            <div className="p-2 bg-blue-100 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400 rounded-lg">
+                <RefreshCw size={20} />
+            </div>
+            <div>
+                <h3 className="font-semibold text-slate-800 dark:text-white text-sm">Sauvegarde & Transfert</h3>
+                <p className="text-xs text-slate-500 dark:text-slate-400">Pour transférer votre cours d'un navigateur à l'autre (ex: Edge vers Chrome).</p>
+            </div>
+        </div>
+        
+        <div className="flex items-center gap-3 w-full md:w-auto">
+            <button 
+                onClick={handleExportConfig}
+                className="flex-1 md:flex-none flex items-center justify-center gap-2 px-4 py-2 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 text-sm font-medium rounded-lg transition-colors shadow-sm"
+                title="Télécharger une copie de sauvegarde"
+            >
+                <Download size={16} />
+                <span>Exporter</span>
+            </button>
+            
+            <label className="flex-1 md:flex-none flex items-center justify-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium rounded-lg transition-colors shadow-sm cursor-pointer">
+                <UploadCloud size={16} />
+                <span>Restaurer</span>
+                <input type="file" accept=".json" onChange={handleImportConfig} className="hidden" />
+            </label>
+        </div>
+        
+        {importStatus && (
+            <div className={`absolute top-20 right-8 px-4 py-2 rounded-lg text-sm shadow-lg animate-in fade-in slide-in-from-top-2 ${importStatus.includes('Erreur') ? 'bg-red-100 text-red-700' : 'bg-green-100 text-green-700'}`}>
+                {importStatus}
+            </div>
+        )}
+      </div>
+
       {/* Tabs Header */}
-      <div className="flex items-center gap-1 mb-4 border-b border-slate-200 dark:border-slate-800">
+      <div className="flex items-center gap-1 mb-0 border-b border-slate-200 dark:border-slate-800">
         <button
           onClick={() => setActiveTab('content')}
           className={`flex items-center gap-2 px-6 py-3 rounded-t-xl font-medium text-sm transition-colors relative top-[1px] ${
@@ -126,7 +211,7 @@ export const CourseEditor: React.FC<CourseEditorProps> = ({
                     <label className="flex items-center gap-2 px-3 py-1.5 bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-lg hover:bg-slate-50 dark:hover:bg-slate-700 cursor-pointer text-slate-700 dark:text-slate-300 text-sm transition-colors">
                         <Upload size={16} />
                         <span>Importer (.txt)</span>
-                        <input type="file" accept=".txt,.md" onChange={handleFileUpload} className="hidden" />
+                        <input type="file" accept=".txt,.md" onChange={handleTextFileUpload} className="hidden" />
                     </label>
                     
                     <div className={`flex items-center gap-2 px-4 py-1.5 rounded-lg text-sm font-medium transition-all ${
