@@ -1,6 +1,7 @@
+
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { GoogleGenAI, LiveServerMessage, Modality } from '@google/genai';
-import { decodeAudioData, createPcmBlob, base64ToUint8Array } from '../services/audioUtils';
+import { decodeAudioData, createPcmBlob, base64ToUint8Array, downsampleBuffer } from '../services/audioUtils';
 
 interface UseLiveSessionProps {
   apiKey: string;
@@ -45,15 +46,32 @@ export const useLiveSession = ({ apiKey, systemInstruction }: UseLiveSessionProp
         aiClientRef.current = new GoogleGenAI({ apiKey });
       }
 
-      // Initialize Audio Contexts
-      inputAudioContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 16000 });
-      outputAudioContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 24000 });
+      // Initialize Audio Contexts WITHOUT hardcoded sampleRate
+      // Mobile browsers (iOS) demand native sample rate (usually 44.1k or 48k)
+      // We cannot force 16k or 24k in the constructor on mobile.
+      const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
+      inputAudioContextRef.current = new AudioContextClass();
+      outputAudioContextRef.current = new AudioContextClass(); // Output usually handles resampling automatically
+
+      // CRITICAL FOR IOS: Resume context immediately after user gesture
+      if (inputAudioContextRef.current.state === 'suspended') {
+        await inputAudioContextRef.current.resume();
+      }
+      if (outputAudioContextRef.current.state === 'suspended') {
+        await outputAudioContextRef.current.resume();
+      }
       
       outputNodeRef.current = outputAudioContextRef.current.createGain();
       outputNodeRef.current.connect(outputAudioContextRef.current.destination);
 
-      // Get User Media
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      // Get User Media - Mobile browsers require this to be triggered by user action (which this function is)
+      const stream = await navigator.mediaDevices.getUserMedia({ 
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true
+        } 
+      });
       streamRef.current = stream;
 
       // Start Session
@@ -99,6 +117,7 @@ export const useLiveSession = ({ apiKey, systemInstruction }: UseLiveSessionProp
 
     const ctx = inputAudioContextRef.current;
     const source = ctx.createMediaStreamSource(stream);
+    // Use a larger buffer size for mobile stability
     const processor = ctx.createScriptProcessor(4096, 1, 1);
 
     processor.onaudioprocess = (e) => {
@@ -106,15 +125,19 @@ export const useLiveSession = ({ apiKey, systemInstruction }: UseLiveSessionProp
 
       const inputData = e.inputBuffer.getChannelData(0);
       
-      // Calculate volume for visualizer
+      // Calculate volume for visualizer using raw data
       let sum = 0;
       for(let i=0; i<inputData.length; i++) {
         sum += inputData[i] * inputData[i];
       }
       const rms = Math.sqrt(sum / inputData.length);
-      setVolumeLevel(Math.min(1, rms * 5)); // Amplify a bit for visual
+      setVolumeLevel(Math.min(1, rms * 5)); 
 
-      const pcmBlob = createPcmBlob(inputData);
+      // DOWNSAMPLING logic:
+      // Mobile native rate is usually 44.1k or 48k. API expects 16k.
+      // We must downsample before creating the blob.
+      const downsampledData = downsampleBuffer(inputData, ctx.sampleRate, 16000);
+      const pcmBlob = createPcmBlob(downsampledData);
 
       if (sessionPromiseRef.current) {
         sessionPromiseRef.current.then(session => {
@@ -137,7 +160,9 @@ export const useLiveSession = ({ apiKey, systemInstruction }: UseLiveSessionProp
         const base64Audio = serverContent.modelTurn.parts[0].inlineData.data;
         if (outputAudioContextRef.current && outputNodeRef.current) {
             const ctx = outputAudioContextRef.current;
-            const audioBuffer = await decodeAudioData(base64ToUint8Array(base64Audio), ctx);
+            // Decode 24000Hz audio from API
+            // The browser will automatically resample this buffer to fit the Context sample rate (e.g. 48k) during playback
+            const audioBuffer = await decodeAudioData(base64ToUint8Array(base64Audio), ctx, 24000);
             
             const source = ctx.createBufferSource();
             source.buffer = audioBuffer;
@@ -145,6 +170,7 @@ export const useLiveSession = ({ apiKey, systemInstruction }: UseLiveSessionProp
             
             // Schedule playback
             const currentTime = ctx.currentTime;
+            // Ensure we don't schedule in the past
             if (nextStartTimeRef.current < currentTime) {
                 nextStartTimeRef.current = currentTime;
             }
@@ -166,6 +192,11 @@ export const useLiveSession = ({ apiKey, systemInstruction }: UseLiveSessionProp
         });
         audioSourcesRef.current.clear();
         nextStartTimeRef.current = 0;
+        
+        // Also reset schedule time to current time to avoid large delays after interruption
+        if (outputAudioContextRef.current) {
+            nextStartTimeRef.current = outputAudioContextRef.current.currentTime;
+        }
     }
   };
 
@@ -191,10 +222,10 @@ export const useLiveSession = ({ apiKey, systemInstruction }: UseLiveSessionProp
         outputAudioContextRef.current = null;
     }
 
-    // Try to close session if possible (though no direct method in simple flow)
-    // We just rely on connection drop
     setStatus('disconnected');
     setVolumeLevel(0);
+    // Reset scheduling
+    nextStartTimeRef.current = 0;
   };
 
   const toggleMute = () => {
