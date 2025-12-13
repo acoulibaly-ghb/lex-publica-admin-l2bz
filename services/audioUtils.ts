@@ -1,14 +1,49 @@
 
 import { Blob } from '@google/genai';
 
-export function base64ToUint8Array(base64: string): Uint8Array {
-  const binaryString = atob(base64);
+// --- Code importé de l'Appli A (Reference) ---
+
+export function base64ToArrayBuffer(base64: string): ArrayBuffer {
+  const binaryString = window.atob(base64);
   const len = binaryString.length;
   const bytes = new Uint8Array(len);
   for (let i = 0; i < len; i++) {
     bytes[i] = binaryString.charCodeAt(i);
   }
-  return bytes;
+  return bytes.buffer;
+}
+
+export async function decodeAudioData(
+  base64String: string,
+  audioContext: AudioContext
+): Promise<AudioBuffer> {
+  const arrayBuffer = base64ToArrayBuffer(base64String);
+  
+  // The Gemini API sends raw PCM 16-bit LE, 24kHz, 1 channel.
+  const dataView = new DataView(arrayBuffer);
+  // We divide by 2 because 16-bit = 2 bytes per sample
+  const float32Array = new Float32Array(arrayBuffer.byteLength / 2);
+  
+  for (let i = 0; i < float32Array.length; i++) {
+    // Force Little Endian reading (true) which is crucial for cross-platform compatibility
+    const int16 = dataView.getInt16(i * 2, true); 
+    float32Array[i] = int16 / 32768.0;
+  }
+
+  // Create the buffer at Gemini's native output rate (24kHz)
+  const audioBuffer = audioContext.createBuffer(1, float32Array.length, 24000);
+  audioBuffer.getChannelData(0).set(float32Array);
+  
+  return audioBuffer;
+}
+
+export function float32ToInt16(float32Array: Float32Array): Int16Array {
+  const int16Array = new Int16Array(float32Array.length);
+  for (let i = 0; i < float32Array.length; i++) {
+    const s = Math.max(-1, Math.min(1, float32Array[i]));
+    int16Array[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
+  }
+  return int16Array;
 }
 
 export function arrayBufferToBase64(buffer: ArrayBuffer): string {
@@ -18,38 +53,29 @@ export function arrayBufferToBase64(buffer: ArrayBuffer): string {
   for (let i = 0; i < len; i++) {
     binary += String.fromCharCode(bytes[i]);
   }
-  return btoa(binary);
+  return window.btoa(binary);
 }
 
-export async function decodeAudioData(
-  data: Uint8Array,
-  ctx: AudioContext,
-  sampleRate: number = 24000,
-  numChannels: number = 1
-): Promise<AudioBuffer> {
-  const dataInt16 = new Int16Array(data.buffer);
-  const frameCount = dataInt16.length / numChannels;
-  const buffer = ctx.createBuffer(numChannels, frameCount, sampleRate);
-
-  for (let channel = 0; channel < numChannels; channel++) {
-    const channelData = buffer.getChannelData(channel);
-    for (let i = 0; i < frameCount; i++) {
-      channelData[i] = dataInt16[i * numChannels + channel] / 32768.0;
-    }
-  }
-  return buffer;
+export function createPcmBlob(data: Float32Array): Blob {
+  const int16Array = float32ToInt16(data);
+  const base64 = arrayBufferToBase64(int16Array.buffer);
+  return {
+    data: base64,
+    mimeType: 'audio/pcm;rate=16000', // Gemini expects 16kHz input
+  };
 }
 
-/**
- * Optimized Downsampling for Real-time Mobile Audio
- * Uses a simpler averaging window to reduce CPU load on older devices
- */
+// --- Fin du code de l'Appli A ---
+
+// --- Utilitaire conservé pour l'Appli B (Nécessaire pour le micro mobile) ---
+// Les navigateurs mobiles capturent souvent en 44.1/48kHz, on doit réduire à 16kHz pour Gemini.
 export function downsampleBuffer(buffer: Float32Array, inputRate: number, targetRate: number): Float32Array {
   if (inputRate === targetRate) {
     return buffer;
   }
   if (inputRate < targetRate) {
-    throw new Error("Upsampling is not supported");
+    // Fallback: return as is if upsampling needed (shouldn't happen with std mics)
+    return buffer;
   }
   
   const sampleRateRatio = inputRate / targetRate;
@@ -60,13 +86,9 @@ export function downsampleBuffer(buffer: Float32Array, inputRate: number, target
     const startOffset = Math.floor(i * sampleRateRatio);
     const endOffset = Math.floor((i + 1) * sampleRateRatio);
     
-    // Optimization: If ratio is close to integer, just pick sample (Decimation)
-    // If complex ratio, do simple average
-    
     let sum = 0;
     let count = 0;
     
-    // Safety check for end of buffer
     const finalOffset = Math.min(endOffset, buffer.length);
     
     for (let j = startOffset; j < finalOffset; j++) {
@@ -78,18 +100,4 @@ export function downsampleBuffer(buffer: Float32Array, inputRate: number, target
   }
   
   return result;
-}
-
-export function createPcmBlob(data: Float32Array): Blob {
-  const l = data.length;
-  const int16 = new Int16Array(l);
-  for (let i = 0; i < l; i++) {
-    // Clamp values to avoid overflow distortion
-    const s = Math.max(-1, Math.min(1, data[i]));
-    int16[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
-  }
-  return {
-    data: arrayBufferToBase64(int16.buffer),
-    mimeType: 'audio/pcm;rate=16000',
-  };
 }
