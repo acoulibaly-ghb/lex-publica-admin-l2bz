@@ -46,11 +46,20 @@ export const useLiveSession = ({ apiKey, systemInstruction }: UseLiveSessionProp
         aiClientRef.current = new GoogleGenAI({ apiKey });
       }
 
-      // Initialize Audio Contexts WITHOUT hardcoded sampleRate
-      // Mobile browsers (iOS) demand native sample rate (usually 44.1k or 48k)
+      // Initialize Audio Contexts
       const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
-      inputAudioContextRef.current = new AudioContextClass();
-      outputAudioContextRef.current = new AudioContextClass(); 
+      
+      // 1. INPUT CONTEXT: Try to force 16kHz to match Gemini requirements natively
+      // This reduces CPU load and resampling errors on mobile
+      try {
+        inputAudioContextRef.current = new AudioContextClass({ sampleRate: 16000 });
+      } catch (e) {
+        console.warn("Could not force 16000Hz sample rate, falling back to native rate", e);
+        inputAudioContextRef.current = new AudioContextClass();
+      }
+
+      // 2. OUTPUT CONTEXT: Use native rate for playback (smoother audio)
+      outputAudioContextRef.current = new AudioContextClass();
 
       // CRITICAL FOR IOS: Resume context immediately after user gesture
       if (inputAudioContextRef.current.state === 'suspended') {
@@ -66,6 +75,8 @@ export const useLiveSession = ({ apiKey, systemInstruction }: UseLiveSessionProp
       // Get User Media
       const stream = await navigator.mediaDevices.getUserMedia({ 
         audio: {
+          channelCount: 1,
+          sampleRate: 16000, // Hint to browser we want 16k
           echoCancellation: true,
           noiseSuppression: true,
           autoGainControl: true
@@ -73,9 +84,9 @@ export const useLiveSession = ({ apiKey, systemInstruction }: UseLiveSessionProp
       });
       streamRef.current = stream;
 
-      // Start Session
+      // Start Session with the model suggested by user intuition (often more stable for Live API)
       const sessionPromise = aiClientRef.current.live.connect({
-        model: 'gemini-2.5-flash-native-audio-preview-09-2025',
+        model: 'gemini-2.0-flash-exp', 
         config: {
           responseModalities: [Modality.AUDIO],
           systemInstruction: systemInstruction,
@@ -122,7 +133,7 @@ export const useLiveSession = ({ apiKey, systemInstruction }: UseLiveSessionProp
     processor.onaudioprocess = (e) => {
       if (isMuted) return; // Don't send data if muted
 
-      const inputData = e.inputBuffer.getChannelData(0);
+      let inputData = e.inputBuffer.getChannelData(0);
       
       // Calculate volume for visualizer using raw data
       let sum = 0;
@@ -133,11 +144,13 @@ export const useLiveSession = ({ apiKey, systemInstruction }: UseLiveSessionProp
       setVolumeLevel(Math.min(1, rms * 5)); 
 
       // DOWNSAMPLING logic:
-      // Mobile native rate is usually 44.1k or 48k. API expects 16k.
-      const downsampledData = downsampleBuffer(inputData, ctx.sampleRate, 16000);
+      // Only downsample if the context wasn't able to set 16kHz natively
+      if (ctx.sampleRate !== 16000) {
+        inputData = downsampleBuffer(inputData, ctx.sampleRate, 16000);
+      }
       
-      // createPcmBlob now uses App A's robust encoding
-      const pcmBlob = createPcmBlob(downsampledData);
+      // createPcmBlob uses App A's robust encoding
+      const pcmBlob = createPcmBlob(inputData);
 
       if (sessionPromiseRef.current) {
         sessionPromiseRef.current.then(session => {
