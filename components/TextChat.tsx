@@ -58,7 +58,7 @@ export const TextChat: React.FC<TextChatProps> = ({ courseContent, systemInstruc
       const fullSystemInstruction = `${systemInstruction}\n\nCONTENU DU COURS (Source Unique de Vérité) :\n${courseContent}`;
       
       const response = await ai.models.generateContent({
-        model: 'gemini-2.5-flash-preview-tts',
+        model: 'gemini-2.5-flash',
         contents: [
             ...(activeSession?.messages || []).map(m => ({
                 role: m.role,
