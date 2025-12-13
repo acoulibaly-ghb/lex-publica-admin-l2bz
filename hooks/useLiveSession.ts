@@ -1,7 +1,7 @@
 
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { GoogleGenAI, LiveServerMessage, Modality } from '@google/genai';
-import { decodeAudioData, createPcmBlob, base64ToUint8Array, downsampleBuffer } from '../services/audioUtils';
+import { decodeAudioData, createPcmBlob, downsampleBuffer } from '../services/audioUtils';
 
 interface UseLiveSessionProps {
   apiKey: string;
@@ -48,10 +48,9 @@ export const useLiveSession = ({ apiKey, systemInstruction }: UseLiveSessionProp
 
       // Initialize Audio Contexts WITHOUT hardcoded sampleRate
       // Mobile browsers (iOS) demand native sample rate (usually 44.1k or 48k)
-      // We cannot force 16k or 24k in the constructor on mobile.
       const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
       inputAudioContextRef.current = new AudioContextClass();
-      outputAudioContextRef.current = new AudioContextClass(); // Output usually handles resampling automatically
+      outputAudioContextRef.current = new AudioContextClass(); 
 
       // CRITICAL FOR IOS: Resume context immediately after user gesture
       if (inputAudioContextRef.current.state === 'suspended') {
@@ -64,7 +63,7 @@ export const useLiveSession = ({ apiKey, systemInstruction }: UseLiveSessionProp
       outputNodeRef.current = outputAudioContextRef.current.createGain();
       outputNodeRef.current.connect(outputAudioContextRef.current.destination);
 
-      // Get User Media - Mobile browsers require this to be triggered by user action (which this function is)
+      // Get User Media
       const stream = await navigator.mediaDevices.getUserMedia({ 
         audio: {
           echoCancellation: true,
@@ -135,8 +134,9 @@ export const useLiveSession = ({ apiKey, systemInstruction }: UseLiveSessionProp
 
       // DOWNSAMPLING logic:
       // Mobile native rate is usually 44.1k or 48k. API expects 16k.
-      // We must downsample before creating the blob.
       const downsampledData = downsampleBuffer(inputData, ctx.sampleRate, 16000);
+      
+      // createPcmBlob now uses App A's robust encoding
       const pcmBlob = createPcmBlob(downsampledData);
 
       if (sessionPromiseRef.current) {
@@ -160,9 +160,11 @@ export const useLiveSession = ({ apiKey, systemInstruction }: UseLiveSessionProp
         const base64Audio = serverContent.modelTurn.parts[0].inlineData.data;
         if (outputAudioContextRef.current && outputNodeRef.current) {
             const ctx = outputAudioContextRef.current;
-            // Decode 24000Hz audio from API
-            // The browser will automatically resample this buffer to fit the Context sample rate (e.g. 48k) during playback
-            const audioBuffer = await decodeAudioData(base64ToUint8Array(base64Audio), ctx, 24000);
+            
+            // USE APP A LOGIC:
+            // Pass the base64 string directly. 
+            // The utility handles DataView parsing (Little Endian) and buffer creation at 24kHz.
+            const audioBuffer = await decodeAudioData(base64Audio, ctx);
             
             const source = ctx.createBufferSource();
             source.buffer = audioBuffer;
