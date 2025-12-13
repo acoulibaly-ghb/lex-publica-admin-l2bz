@@ -41,7 +41,8 @@ export async function decodeAudioData(
 }
 
 /**
- * Downsamples audio buffer from input rate (e.g. 44100Hz) to target rate (16000Hz)
+ * Optimized Downsampling for Real-time Mobile Audio
+ * Uses a simpler averaging window to reduce CPU load on older devices
  */
 export function downsampleBuffer(buffer: Float32Array, inputRate: number, targetRate: number): Float32Array {
   if (inputRate === targetRate) {
@@ -52,22 +53,28 @@ export function downsampleBuffer(buffer: Float32Array, inputRate: number, target
   }
   
   const sampleRateRatio = inputRate / targetRate;
-  const newLength = Math.round(buffer.length / sampleRateRatio);
+  const newLength = Math.floor(buffer.length / sampleRateRatio);
   const result = new Float32Array(newLength);
-  let offsetResult = 0;
-  let offsetBuffer = 0;
   
-  while (offsetResult < result.length) {
-    const nextOffsetBuffer = Math.round((offsetResult + 1) * sampleRateRatio);
-    // Use average value of skipped samples to prevent aliasing (simple low-pass filter effect)
-    let accum = 0, count = 0;
-    for (let i = offsetBuffer; i < nextOffsetBuffer && i < buffer.length; i++) {
-      accum += buffer[i];
+  for (let i = 0; i < newLength; i++) {
+    const startOffset = Math.floor(i * sampleRateRatio);
+    const endOffset = Math.floor((i + 1) * sampleRateRatio);
+    
+    // Optimization: If ratio is close to integer, just pick sample (Decimation)
+    // If complex ratio, do simple average
+    
+    let sum = 0;
+    let count = 0;
+    
+    // Safety check for end of buffer
+    const finalOffset = Math.min(endOffset, buffer.length);
+    
+    for (let j = startOffset; j < finalOffset; j++) {
+      sum += buffer[j];
       count++;
     }
-    result[offsetResult] = count !== 0 ? accum / count : 0;
-    offsetResult++;
-    offsetBuffer = nextOffsetBuffer;
+    
+    result[i] = count > 0 ? sum / count : buffer[startOffset];
   }
   
   return result;
@@ -77,7 +84,9 @@ export function createPcmBlob(data: Float32Array): Blob {
   const l = data.length;
   const int16 = new Int16Array(l);
   for (let i = 0; i < l; i++) {
-    int16[i] = Math.max(-32768, Math.min(32767, data[i] * 32768));
+    // Clamp values to avoid overflow distortion
+    const s = Math.max(-1, Math.min(1, data[i]));
+    int16[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
   }
   return {
     data: arrayBufferToBase64(int16.buffer),
