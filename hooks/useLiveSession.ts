@@ -47,21 +47,14 @@ export const useLiveSession = ({ apiKey, systemInstruction }: UseLiveSessionProp
       }
 
       // Initialize Audio Contexts
+      // FIX: Do NOT force sampleRate. Let the browser/OS decide the native rate (44.1k/48k).
+      // Forcing it on macOS/iOS often breaks the context or causes silence.
       const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
       
-      // 1. INPUT CONTEXT: Try to force 16kHz to match Gemini requirements natively
-      // This reduces CPU load and resampling errors on mobile
-      try {
-        inputAudioContextRef.current = new AudioContextClass({ sampleRate: 16000 });
-      } catch (e) {
-        console.warn("Could not force 16000Hz sample rate, falling back to native rate", e);
-        inputAudioContextRef.current = new AudioContextClass();
-      }
-
-      // 2. OUTPUT CONTEXT: Use native rate for playback (smoother audio)
+      inputAudioContextRef.current = new AudioContextClass();
       outputAudioContextRef.current = new AudioContextClass();
 
-      // CRITICAL FOR IOS: Resume context immediately after user gesture
+      // CRITICAL FOR IOS/MAC: Resume context immediately after user gesture
       if (inputAudioContextRef.current.state === 'suspended') {
         await inputAudioContextRef.current.resume();
       }
@@ -73,10 +66,10 @@ export const useLiveSession = ({ apiKey, systemInstruction }: UseLiveSessionProp
       outputNodeRef.current.connect(outputAudioContextRef.current.destination);
 
       // Get User Media
+      // We ask for standard settings. We will handle 16kHz conversion manually.
       const stream = await navigator.mediaDevices.getUserMedia({ 
         audio: {
           channelCount: 1,
-          sampleRate: 16000, // Hint to browser we want 16k
           echoCancellation: true,
           noiseSuppression: true,
           autoGainControl: true
@@ -84,9 +77,10 @@ export const useLiveSession = ({ apiKey, systemInstruction }: UseLiveSessionProp
       });
       streamRef.current = stream;
 
-      // Start Session with the model suggested by user intuition (often more stable for Live API)
+      // Start Session
+      // Using the standard 'gemini-2.5-flash-native-audio-preview-09-2025' model
       const sessionPromise = aiClientRef.current.live.connect({
-        model: 'gemini-2.0-flash-exp', 
+        model: 'gemini-2.5-flash-native-audio-preview-09-2025', 
         config: {
           responseModalities: [Modality.AUDIO],
           systemInstruction: systemInstruction,
@@ -127,15 +121,14 @@ export const useLiveSession = ({ apiKey, systemInstruction }: UseLiveSessionProp
 
     const ctx = inputAudioContextRef.current;
     const source = ctx.createMediaStreamSource(stream);
-    // Use a larger buffer size for mobile stability
     const processor = ctx.createScriptProcessor(4096, 1, 1);
 
     processor.onaudioprocess = (e) => {
-      if (isMuted) return; // Don't send data if muted
+      if (isMuted) return;
 
-      let inputData = e.inputBuffer.getChannelData(0);
+      const inputData = e.inputBuffer.getChannelData(0);
       
-      // Calculate volume for visualizer using raw data
+      // 1. Visualizer logic
       let sum = 0;
       for(let i=0; i<inputData.length; i++) {
         sum += inputData[i] * inputData[i];
@@ -143,14 +136,15 @@ export const useLiveSession = ({ apiKey, systemInstruction }: UseLiveSessionProp
       const rms = Math.sqrt(sum / inputData.length);
       setVolumeLevel(Math.min(1, rms * 5)); 
 
-      // DOWNSAMPLING logic:
-      // Only downsample if the context wasn't able to set 16kHz natively
+      // 2. Downsampling logic (Crucial fix for Mac/iOS)
+      // The context is likely running at 44100 or 48000. Gemini needs 16000.
+      // We MUST downsample manually.
+      let dataToSend = inputData;
       if (ctx.sampleRate !== 16000) {
-        inputData = downsampleBuffer(inputData, ctx.sampleRate, 16000);
+        dataToSend = downsampleBuffer(inputData, ctx.sampleRate, 16000);
       }
       
-      // createPcmBlob uses App A's robust encoding
-      const pcmBlob = createPcmBlob(inputData);
+      const pcmBlob = createPcmBlob(dataToSend);
 
       if (sessionPromiseRef.current) {
         sessionPromiseRef.current.then(session => {
@@ -159,8 +153,16 @@ export const useLiveSession = ({ apiKey, systemInstruction }: UseLiveSessionProp
       }
     };
 
+    // 3. Anti-Feedback logic
+    // Create a GainNode with 0 gain to mute the input while keeping the graph alive.
+    // This is necessary because ScriptProcessor often stops if not connected to destination,
+    // but connecting directly causes you to hear yourself (feedback loop).
+    const muteNode = ctx.createGain();
+    muteNode.gain.value = 0;
+
     source.connect(processor);
-    processor.connect(ctx.destination);
+    processor.connect(muteNode);
+    muteNode.connect(ctx.destination);
 
     inputSourceRef.current = source;
     processorRef.current = processor;
@@ -174,18 +176,13 @@ export const useLiveSession = ({ apiKey, systemInstruction }: UseLiveSessionProp
         if (outputAudioContextRef.current && outputNodeRef.current) {
             const ctx = outputAudioContextRef.current;
             
-            // USE APP A LOGIC:
-            // Pass the base64 string directly. 
-            // The utility handles DataView parsing (Little Endian) and buffer creation at 24kHz.
             const audioBuffer = await decodeAudioData(base64Audio, ctx);
             
             const source = ctx.createBufferSource();
             source.buffer = audioBuffer;
             source.connect(outputNodeRef.current);
             
-            // Schedule playback
             const currentTime = ctx.currentTime;
-            // Ensure we don't schedule in the past
             if (nextStartTimeRef.current < currentTime) {
                 nextStartTimeRef.current = currentTime;
             }
@@ -201,14 +198,12 @@ export const useLiveSession = ({ apiKey, systemInstruction }: UseLiveSessionProp
     }
 
     if (serverContent?.interrupted) {
-        // Clear queue
         audioSourcesRef.current.forEach(source => {
             try { source.stop(); } catch(e) {}
         });
         audioSourcesRef.current.clear();
         nextStartTimeRef.current = 0;
         
-        // Also reset schedule time to current time to avoid large delays after interruption
         if (outputAudioContextRef.current) {
             nextStartTimeRef.current = outputAudioContextRef.current.currentTime;
         }
@@ -239,7 +234,6 @@ export const useLiveSession = ({ apiKey, systemInstruction }: UseLiveSessionProp
 
     setStatus('disconnected');
     setVolumeLevel(0);
-    // Reset scheduling
     nextStartTimeRef.current = 0;
   };
 
