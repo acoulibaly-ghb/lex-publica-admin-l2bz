@@ -1,32 +1,10 @@
 import { useState, useRef, useEffect } from 'react';
 import { GoogleGenAI, LiveServerMessage } from '@google/genai';
-import { downsampleBuffer } from '../services/audioUtils';
+import { downsampleBuffer, floatTo16BitPCM, arrayBufferToBase64 } from '../services/audioUtils';
 
 interface UseLiveSessionProps {
   apiKey: string;
   systemInstruction: string;
-}
-
-// CORRECTION 1 : On accepte "ArrayBufferLike" pour satisfaire le compilateur Vercel
-// (Cela couvre ArrayBuffer et SharedArrayBuffer)
-function arrayBufferToBase64(buffer: ArrayBufferLike) {
-  let binary = '';
-  const bytes = new Uint8Array(buffer);
-  const len = bytes.byteLength;
-  for (let i = 0; i < len; i++) {
-    binary += String.fromCharCode(bytes[i]);
-  }
-  return window.btoa(binary);
-}
-
-// Conversion Float32 (Micro) -> PCM 16bit (IA)
-function floatTo16BitPCM(input: Float32Array): ArrayBuffer {
-  const output = new Int16Array(input.length);
-  for (let i = 0; i < input.length; i++) {
-    const s = Math.max(-1, Math.min(1, input[i]));
-    output[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
-  }
-  return output.buffer;
 }
 
 export const useLiveSession = ({ apiKey, systemInstruction }: UseLiveSessionProps) => {
@@ -74,11 +52,11 @@ export const useLiveSession = ({ apiKey, systemInstruction }: UseLiveSessionProp
       if (inputAudioContextRef.current.state === 'suspended') await inputAudioContextRef.current.resume();
       if (outputAudioContextRef.current.state === 'suspended') await outputAudioContextRef.current.resume();
 
-      // CORRECTION 2 : Configuration robuste du modèle
+      // Configuration du modèle
       const config = {
         model: 'gemini-2.0-flash-exp',
         generationConfig: {
-          responseModalities: "AUDIO" as any, // "as any" évite l'erreur de type string vs enum
+          responseModalities: "AUDIO" as any, 
           speechConfig: {
             voiceConfig: { prebuiltVoiceConfig: { voiceName: 'Kore' } },
           },
@@ -86,9 +64,16 @@ export const useLiveSession = ({ apiKey, systemInstruction }: UseLiveSessionProp
         systemInstruction: { parts: [{ text: systemInstruction }] },
       };
 
+      // CORRECTION 1 : Ajout de l'objet 'callbacks' requis par TypeScript
       const session = await aiClientRef.current.live.connect({
         model: config.model,
-        config: config
+        config: config,
+        callbacks: {
+            onopen: () => console.log("Session opened via callback"),
+            onclose: () => console.log("Session closed via callback"),
+            onmessage: () => {}, // On gère les messages via le stream ci-dessous
+            onerror: (e) => console.error("Session error", e)
+        }
       });
 
       currentSessionRef.current = session;
@@ -132,7 +117,6 @@ export const useLiveSession = ({ apiKey, systemInstruction }: UseLiveSessionProp
 
       const ctx = inputAudioContextRef.current!;
       const source = ctx.createMediaStreamSource(stream);
-      // ScriptProcessor est déprécié mais reste le plus stable pour ce hack rapide
       const processor = ctx.createScriptProcessor(4096, 1, 1);
 
       processor.onaudioprocess = (e) => {
@@ -148,7 +132,8 @@ export const useLiveSession = ({ apiKey, systemInstruction }: UseLiveSessionProp
         // Downsample si nécessaire
         let dataToProcess = inputData;
         if (ctx.sampleRate !== 16000) {
-           dataToProcess = downsampleBuffer(inputData, ctx.sampleRate, 16000);
+           // CORRECTION 2 : "as Float32Array" force le type pour éviter l'erreur SharedArrayBuffer
+           dataToProcess = downsampleBuffer(inputData, ctx.sampleRate, 16000) as Float32Array;
         }
 
         // Conversion & Envoi
@@ -191,7 +176,6 @@ export const useLiveSession = ({ apiKey, systemInstruction }: UseLiveSessionProp
         console.log("Interruption !");
         audioQueueRef.current = [];
         if(outputAudioContextRef.current) {
-            // Reset rapide du contexte pour arrêter le son
             outputAudioContextRef.current.suspend().then(() => outputAudioContextRef.current?.resume());
             nextStartTimeRef.current = outputAudioContextRef.current.currentTime;
         }
