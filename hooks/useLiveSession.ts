@@ -7,15 +7,12 @@ interface UseLiveSessionProps {
   systemInstruction: string;
 }
 
-// Fonction de conversion PCM 16-bit Little Endian (Format strict Google)
-// Définie ici pour éviter les conflits de types externes
+// Helper: Conversion PCM 16-bit Little Endian
 function floatTo16BitPCM(input: Float32Array): ArrayBuffer {
   const output = new DataView(new ArrayBuffer(input.length * 2));
   for (let i = 0; i < input.length; i++) {
     const s = Math.max(-1, Math.min(1, input[i]));
-    // Conversion en 16-bit signé
     const val = s < 0 ? s * 0x8000 : s * 0x7FFF;
-    // true = Little Endian (Impératif pour Google)
     output.setInt16(i * 2, val, true);
   }
   return output.buffer;
@@ -26,13 +23,18 @@ export const useLiveSession = ({ apiKey, systemInstruction }: UseLiveSessionProp
   const [isMuted, setIsMuted] = useState(false);
   const [volumeLevel, setVolumeLevel] = useState(0);
 
+  // Audio Refs
   const inputAudioContextRef = useRef<AudioContext | null>(null);
   const outputAudioContextRef = useRef<AudioContext | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const processorRef = useRef<ScriptProcessorNode | null>(null);
   const inputSourceRef = useRef<MediaStreamAudioSourceNode | null>(null);
+  
+  // AI Refs
   const aiClientRef = useRef<GoogleGenAI | null>(null);
   const currentSessionRef = useRef<any>(null);
+  
+  // Playback Refs
   const nextStartTimeRef = useRef<number>(0);
   const audioQueueRef = useRef<AudioBuffer[]>([]);
 
@@ -40,6 +42,28 @@ export const useLiveSession = ({ apiKey, systemInstruction }: UseLiveSessionProp
     return () => disconnect();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // --- LOGIQUE DE RÉCEPTION (Déplacée ici pour être accessible au callback) ---
+  const processServerMessage = (message: LiveServerMessage) => {
+    const serverContent = message.serverContent;
+
+    // 1. Réception audio
+    if (serverContent?.modelTurn?.parts?.[0]?.inlineData?.data) {
+        const base64Audio = serverContent.modelTurn.parts[0].inlineData.data;
+        playAudioChunk(base64Audio);
+    }
+
+    // 2. Gestion de l'interruption
+    if (serverContent?.interrupted) {
+        console.log("Interruption par l'IA");
+        audioQueueRef.current = []; // Vider la queue locale si on en avait une
+        if(outputAudioContextRef.current) {
+            // "Reset" rapide du contexte audio pour couper la parole
+            outputAudioContextRef.current.suspend().then(() => outputAudioContextRef.current?.resume());
+            nextStartTimeRef.current = outputAudioContextRef.current.currentTime;
+        }
+    }
+  };
 
   const connect = async () => {
     if (status === 'connected' || status === 'connecting') return;
@@ -50,6 +74,7 @@ export const useLiveSession = ({ apiKey, systemInstruction }: UseLiveSessionProp
         aiClientRef.current = new GoogleGenAI({ apiKey });
       }
 
+      // Init Audio Contexts
       const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
       inputAudioContextRef.current = new AudioContextClass();
       outputAudioContextRef.current = new AudioContextClass();
@@ -57,7 +82,7 @@ export const useLiveSession = ({ apiKey, systemInstruction }: UseLiveSessionProp
       if (inputAudioContextRef.current.state === 'suspended') await inputAudioContextRef.current.resume();
       if (outputAudioContextRef.current.state === 'suspended') await outputAudioContextRef.current.resume();
 
-      // CORRECTION : Ajout de l'objet callbacks OBLIGATOIRE pour TypeScript
+      // CONNEXION AVEC CALLBACKS (Architecture Événementielle)
       const session = await aiClientRef.current.live.connect({
         model: 'gemini-2.0-flash-exp',
         config: {
@@ -70,40 +95,38 @@ export const useLiveSession = ({ apiKey, systemInstruction }: UseLiveSessionProp
           systemInstruction: { parts: [{ text: systemInstruction }] },
         },
         callbacks: {
-            onopen: () => console.log("Session opened"),
+            onopen: () => {
+                console.log("✅ Session opened (Callback)");
+                setStatus('connected');
+            },
             onclose: () => {
-                console.log("Session closed");
+                console.log("❌ Session closed (Callback)");
                 setStatus('disconnected');
             },
-            onmessage: () => {}, 
-            onerror: (e) => console.error("Session error", e)
+            // C'EST ICI QUE TOUT SE JOUE : On reçoit le message directement
+            onmessage: (msg: LiveServerMessage) => {
+                processServerMessage(msg);
+            },
+            onerror: (e) => {
+                console.error("⚠️ Session error", e);
+                setStatus('error');
+            }
         }
       });
 
       currentSessionRef.current = session;
-      setStatus('connected');
-      console.log('Gemini Live Session Connected');
+      // Note: setStatus('connected') est aussi géré dans onopen, mais on le garde ici par sécurité
+      console.log('Gemini Live Session Object Created');
 
       // Démarrage micro
       await startAudioInput();
 
-      // Écoute des messages
-      listenToIncomingMessages(session);
+      // IMPORTANT : On a SUPPRIMÉ l'appel à listenToIncomingMessages()
+      // Plus de boucle "for await", plus de crash "not async iterable".
 
     } catch (error) {
       console.error('Connection failed:', error);
       setStatus('error');
-      disconnect();
-    }
-  };
-
-  const listenToIncomingMessages = async (session: any) => {
-    try {
-      for await (const msg of session.receive()) {
-        handleServerMessage(msg);
-      }
-    } catch (err) {
-      console.log("Stream connection lost", err);
       disconnect();
     }
   };
@@ -135,13 +158,13 @@ export const useLiveSession = ({ apiKey, systemInstruction }: UseLiveSessionProp
         for (let i = 0; i < inputData.length; i++) sum += inputData[i] * inputData[i];
         setVolumeLevel(Math.min(1, Math.sqrt(sum / inputData.length) * 5));
 
-        // Downsample avec "as any" pour calmer TypeScript sur les buffers
+        // Downsample
         let dataToProcess: Float32Array = inputData;
         if (ctx.sampleRate !== 16000) {
            dataToProcess = downsampleBuffer(inputData, ctx.sampleRate, 16000) as any;
         }
 
-        // Conversion Little Endian stricte (DataView)
+        // Conversion & Envoi
         const pcm16 = floatTo16BitPCM(dataToProcess);
         const base64Data = arrayBufferToBase64(pcm16);
 
@@ -156,7 +179,7 @@ export const useLiveSession = ({ apiKey, systemInstruction }: UseLiveSessionProp
                 endOfTurn: false
             });
         } catch (error) {
-            // Ignorer les erreurs d'envoi isolées
+            // Silence en cas d'erreur d'envoi ponctuelle
         }
       };
 
@@ -171,24 +194,6 @@ export const useLiveSession = ({ apiKey, systemInstruction }: UseLiveSessionProp
 
     } catch (e) {
       console.error("Microphone error:", e);
-    }
-  };
-
-  const handleServerMessage = async (message: LiveServerMessage) => {
-    const serverContent = message.serverContent;
-
-    if (serverContent?.modelTurn?.parts?.[0]?.inlineData?.data) {
-        const base64Audio = serverContent.modelTurn.parts[0].inlineData.data;
-        playAudioChunk(base64Audio);
-    }
-
-    if (serverContent?.interrupted) {
-        console.log("Interruption par l'IA");
-        audioQueueRef.current = [];
-        if(outputAudioContextRef.current) {
-            outputAudioContextRef.current.suspend().then(() => outputAudioContextRef.current?.resume());
-            nextStartTimeRef.current = outputAudioContextRef.current.currentTime;
-        }
     }
   };
 
