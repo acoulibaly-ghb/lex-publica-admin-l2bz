@@ -11,7 +11,7 @@ const App = () => {
   const [activeMode, setActiveMode] = useState<AppMode>(AppMode.TEXT);
   const [courseContent, setCourseContent] = useState<string>(DEFAULT_COURSE_CONTENT);
   const [systemInstruction, setSystemInstruction] = useState<string>(DEFAULT_SYSTEM_INSTRUCTION);
-  const apiKey = process.env.API_KEY || '';
+  const apiKey = import.meta.env.VITE_API_KEY || '';
   
   // Security: Get password from environment variable, fallback to 'admin' if not set
   const teacherPassword = process.env.TEACHER_PASSWORD || 'admin';
