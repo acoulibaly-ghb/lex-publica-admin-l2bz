@@ -8,6 +8,7 @@ interface UseLiveSessionProps {
 }
 
 // Fonction de conversion PCM 16-bit Little Endian (Format strict Google)
+// Définie ici pour éviter les conflits de types externes
 function floatTo16BitPCM(input: Float32Array): ArrayBuffer {
   const output = new DataView(new ArrayBuffer(input.length * 2));
   for (let i = 0; i < input.length; i++) {
@@ -56,9 +57,9 @@ export const useLiveSession = ({ apiKey, systemInstruction }: UseLiveSessionProp
       if (inputAudioContextRef.current.state === 'suspended') await inputAudioContextRef.current.resume();
       if (outputAudioContextRef.current.state === 'suspended') await outputAudioContextRef.current.resume();
 
-      // CONFIGURATION CORRIGÉE (Plus de nesting 'config' inutile)
+      // CORRECTION : Ajout de l'objet callbacks OBLIGATOIRE pour TypeScript
       const session = await aiClientRef.current.live.connect({
-        model: 'gemini-2.0-flash-exp', // On reste sur le modèle WebSocket compatible
+        model: 'gemini-2.0-flash-exp',
         config: {
           generationConfig: {
             responseModalities: "AUDIO" as any,
@@ -67,12 +68,21 @@ export const useLiveSession = ({ apiKey, systemInstruction }: UseLiveSessionProp
             },
           },
           systemInstruction: { parts: [{ text: systemInstruction }] },
+        },
+        callbacks: {
+            onopen: () => console.log("Session opened"),
+            onclose: () => {
+                console.log("Session closed");
+                setStatus('disconnected');
+            },
+            onmessage: () => {}, 
+            onerror: (e) => console.error("Session error", e)
         }
       });
 
       currentSessionRef.current = session;
       setStatus('connected');
-      console.log('Gemini Live Session Connected (Standard Model)');
+      console.log('Gemini Live Session Connected');
 
       // Démarrage micro
       await startAudioInput();
@@ -94,7 +104,6 @@ export const useLiveSession = ({ apiKey, systemInstruction }: UseLiveSessionProp
       }
     } catch (err) {
       console.log("Stream connection lost", err);
-      // Si le stream coupe, on déconnecte proprement pour éviter les erreurs "send is not a function"
       disconnect();
     }
   };
@@ -117,7 +126,6 @@ export const useLiveSession = ({ apiKey, systemInstruction }: UseLiveSessionProp
 
       processor.onaudioprocess = (e) => {
         if (isMuted) return;
-        // Si la session est morte, on arrête tout de suite
         if (!currentSessionRef.current) return;
 
         const inputData = e.inputBuffer.getChannelData(0);
@@ -127,13 +135,13 @@ export const useLiveSession = ({ apiKey, systemInstruction }: UseLiveSessionProp
         for (let i = 0; i < inputData.length; i++) sum += inputData[i] * inputData[i];
         setVolumeLevel(Math.min(1, Math.sqrt(sum / inputData.length) * 5));
 
-        // Downsample
+        // Downsample avec "as any" pour calmer TypeScript sur les buffers
         let dataToProcess: Float32Array = inputData;
         if (ctx.sampleRate !== 16000) {
            dataToProcess = downsampleBuffer(inputData, ctx.sampleRate, 16000) as any;
         }
 
-        // Conversion Little Endian stricte
+        // Conversion Little Endian stricte (DataView)
         const pcm16 = floatTo16BitPCM(dataToProcess);
         const base64Data = arrayBufferToBase64(pcm16);
 
@@ -145,7 +153,7 @@ export const useLiveSession = ({ apiKey, systemInstruction }: UseLiveSessionProp
                         data: base64Data
                     }
                 }],
-                endOfTurn: false // Indique qu'on continue de parler
+                endOfTurn: false
             });
         } catch (error) {
             // Ignorer les erreurs d'envoi isolées
