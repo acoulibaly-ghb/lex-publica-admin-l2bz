@@ -1,10 +1,23 @@
 import { useState, useRef, useEffect } from 'react';
 import { GoogleGenAI, LiveServerMessage } from '@google/genai';
-import { downsampleBuffer, floatTo16BitPCM, arrayBufferToBase64 } from '../services/audioUtils';
+import { downsampleBuffer, arrayBufferToBase64 } from '../services/audioUtils';
 
 interface UseLiveSessionProps {
   apiKey: string;
   systemInstruction: string;
+}
+
+// Fonction de conversion PCM 16-bit Little Endian (Format strict Google)
+function floatTo16BitPCM(input: Float32Array): ArrayBuffer {
+  const output = new DataView(new ArrayBuffer(input.length * 2));
+  for (let i = 0; i < input.length; i++) {
+    const s = Math.max(-1, Math.min(1, input[i]));
+    // Conversion en 16-bit signé
+    const val = s < 0 ? s * 0x8000 : s * 0x7FFF;
+    // true = Little Endian (Impératif pour Google)
+    output.setInt16(i * 2, val, true);
+  }
+  return output.buffer;
 }
 
 export const useLiveSession = ({ apiKey, systemInstruction }: UseLiveSessionProps) => {
@@ -12,20 +25,13 @@ export const useLiveSession = ({ apiKey, systemInstruction }: UseLiveSessionProp
   const [isMuted, setIsMuted] = useState(false);
   const [volumeLevel, setVolumeLevel] = useState(0);
 
-  // Audio Contexts
   const inputAudioContextRef = useRef<AudioContext | null>(null);
   const outputAudioContextRef = useRef<AudioContext | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
-  
-  // Processing
   const processorRef = useRef<ScriptProcessorNode | null>(null);
   const inputSourceRef = useRef<MediaStreamAudioSourceNode | null>(null);
-
-  // Gemini Client
   const aiClientRef = useRef<GoogleGenAI | null>(null);
   const currentSessionRef = useRef<any>(null);
-
-  // Queue audio
   const nextStartTimeRef = useRef<number>(0);
   const audioQueueRef = useRef<AudioBuffer[]>([]);
 
@@ -50,38 +56,25 @@ export const useLiveSession = ({ apiKey, systemInstruction }: UseLiveSessionProp
       if (inputAudioContextRef.current.state === 'suspended') await inputAudioContextRef.current.resume();
       if (outputAudioContextRef.current.state === 'suspended') await outputAudioContextRef.current.resume();
 
-      // --- LE CHANGEMENT MAGIQUE EST ICI ---
-      // On utilise votre modèle "VIP" optimisé pour la voix (comme l'Appli B)
-      const config = {
-        model: 'models/gemini-2.5-flash-preview-tts', 
-        generationConfig: {
-          responseModalities: "AUDIO" as any, 
-          speechConfig: {
-            voiceConfig: { prebuiltVoiceConfig: { voiceName: 'Kore' } },
-          },
-        },
-        systemInstruction: { parts: [{ text: systemInstruction }] },
-      };
-
+      // CONFIGURATION CORRIGÉE (Plus de nesting 'config' inutile)
       const session = await aiClientRef.current.live.connect({
-        model: config.model,
-        config: config,
-        callbacks: {
-            onopen: () => console.log("Session opened"),
-            onclose: () => {
-                console.log("Session closed");
-                setStatus('disconnected');
+        model: 'gemini-2.0-flash-exp', // On reste sur le modèle WebSocket compatible
+        config: {
+          generationConfig: {
+            responseModalities: "AUDIO" as any,
+            speechConfig: {
+              voiceConfig: { prebuiltVoiceConfig: { voiceName: 'Kore' } },
             },
-            onmessage: () => {}, 
-            onerror: (e) => console.error("Session error", e)
+          },
+          systemInstruction: { parts: [{ text: systemInstruction }] },
         }
       });
 
       currentSessionRef.current = session;
       setStatus('connected');
-      console.log('Gemini Live Session Connected (VIP Model)');
+      console.log('Gemini Live Session Connected (Standard Model)');
 
-      // Démarrage du micro
+      // Démarrage micro
       await startAudioInput();
 
       // Écoute des messages
@@ -96,11 +89,13 @@ export const useLiveSession = ({ apiKey, systemInstruction }: UseLiveSessionProp
 
   const listenToIncomingMessages = async (session: any) => {
     try {
-        for await (const msg of session.receive()) {
-            handleServerMessage(msg);
-        }
+      for await (const msg of session.receive()) {
+        handleServerMessage(msg);
+      }
     } catch (err) {
-        console.log("Stream ended or error", err);
+      console.log("Stream connection lost", err);
+      // Si le stream coupe, on déconnecte proprement pour éviter les erreurs "send is not a function"
+      disconnect();
     }
   };
 
@@ -122,23 +117,23 @@ export const useLiveSession = ({ apiKey, systemInstruction }: UseLiveSessionProp
 
       processor.onaudioprocess = (e) => {
         if (isMuted) return;
-        
-        // SÉCURITÉ CRITIQUE : Si la session n'est pas prête, on n'envoie RIEN.
-        // C'est ce qui faisait planter Safari (envoi prématuré).
+        // Si la session est morte, on arrête tout de suite
         if (!currentSessionRef.current) return;
 
         const inputData = e.inputBuffer.getChannelData(0);
 
-        // Visualizer
+        // Visualizer simple
         let sum = 0;
         for (let i = 0; i < inputData.length; i++) sum += inputData[i] * inputData[i];
         setVolumeLevel(Math.min(1, Math.sqrt(sum / inputData.length) * 5));
 
+        // Downsample
         let dataToProcess: Float32Array = inputData;
         if (ctx.sampleRate !== 16000) {
            dataToProcess = downsampleBuffer(inputData, ctx.sampleRate, 16000) as any;
         }
 
+        // Conversion Little Endian stricte
         const pcm16 = floatTo16BitPCM(dataToProcess);
         const base64Data = arrayBufferToBase64(pcm16);
 
@@ -149,11 +144,11 @@ export const useLiveSession = ({ apiKey, systemInstruction }: UseLiveSessionProp
                         mimeType: "audio/pcm;rate=16000",
                         data: base64Data
                     }
-                }]
+                }],
+                endOfTurn: false // Indique qu'on continue de parler
             });
         } catch (error) {
-            // On ignore les erreurs d'envoi silencieuses pour ne pas crasher l'appli
-            console.warn("Frame drop", error);
+            // Ignorer les erreurs d'envoi isolées
         }
       };
 
@@ -180,7 +175,7 @@ export const useLiveSession = ({ apiKey, systemInstruction }: UseLiveSessionProp
     }
 
     if (serverContent?.interrupted) {
-        console.log("Interruption !");
+        console.log("Interruption par l'IA");
         audioQueueRef.current = [];
         if(outputAudioContextRef.current) {
             outputAudioContextRef.current.suspend().then(() => outputAudioContextRef.current?.resume());
