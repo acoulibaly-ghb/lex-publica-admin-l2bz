@@ -64,7 +64,7 @@ export const useLiveSession = ({ apiKey, systemInstruction }: UseLiveSessionProp
         systemInstruction: { parts: [{ text: systemInstruction }] },
       };
 
-      // Connexion avec gestion des Callbacks pour satisfaire TypeScript
+      // Connexion avec callbacks pour satisfaire TypeScript
       const session = await aiClientRef.current.live.connect({
         model: config.model,
         config: config,
@@ -129,15 +129,15 @@ export const useLiveSession = ({ apiKey, systemInstruction }: UseLiveSessionProp
         for (let i = 0; i < inputData.length; i++) sum += inputData[i] * inputData[i];
         setVolumeLevel(Math.min(1, Math.sqrt(sum / inputData.length) * 5));
 
-        // --- LA CORRECTION ANTI-VAUDOU EST ICI ---
+        // --- LE CORRECTIF ANTI-VAUDOU EST ICI ---
         let dataToProcess: Float32Array = inputData;
 
         if (ctx.sampleRate !== 16000) {
-           // On utilise "as any" pour dire à TypeScript de se taire sur le type de buffer.
-           // C'est brutal mais nécessaire pour Vercel ici.
+           // On utilise "as any" pour forcer TypeScript à accepter le buffer redimensionné
+           // C'est brutal mais nécessaire et sans danger ici.
            dataToProcess = downsampleBuffer(inputData, ctx.sampleRate, 16000) as any;
         }
-        // -----------------------------------------
+        // ----------------------------------------
 
         // Conversion & Envoi
         const pcm16 = floatTo16BitPCM(dataToProcess);
