@@ -64,14 +64,14 @@ export const useLiveSession = ({ apiKey, systemInstruction }: UseLiveSessionProp
         systemInstruction: { parts: [{ text: systemInstruction }] },
       };
 
-      // CORRECTION 1 : Ajout de l'objet 'callbacks' requis par TypeScript
+      // Connexion avec gestion des Callbacks pour satisfaire TypeScript
       const session = await aiClientRef.current.live.connect({
         model: config.model,
         config: config,
         callbacks: {
-            onopen: () => console.log("Session opened via callback"),
-            onclose: () => console.log("Session closed via callback"),
-            onmessage: () => {}, // On gère les messages via le stream ci-dessous
+            onopen: () => console.log("Session opened"),
+            onclose: () => console.log("Session closed"),
+            onmessage: () => {}, 
             onerror: (e) => console.error("Session error", e)
         }
       });
@@ -129,12 +129,15 @@ export const useLiveSession = ({ apiKey, systemInstruction }: UseLiveSessionProp
         for (let i = 0; i < inputData.length; i++) sum += inputData[i] * inputData[i];
         setVolumeLevel(Math.min(1, Math.sqrt(sum / inputData.length) * 5));
 
-        // Downsample si nécessaire
-        let dataToProcess = inputData;
+        // --- LA CORRECTION ANTI-VAUDOU EST ICI ---
+        let dataToProcess: Float32Array = inputData;
+
         if (ctx.sampleRate !== 16000) {
-           // CORRECTION 2 : "as Float32Array" force le type pour éviter l'erreur SharedArrayBuffer
-           dataToProcess = downsampleBuffer(inputData, ctx.sampleRate, 16000) as Float32Array;
+           // On utilise "as any" pour dire à TypeScript de se taire sur le type de buffer.
+           // C'est brutal mais nécessaire pour Vercel ici.
+           dataToProcess = downsampleBuffer(inputData, ctx.sampleRate, 16000) as any;
         }
+        // -----------------------------------------
 
         // Conversion & Envoi
         const pcm16 = floatTo16BitPCM(dataToProcess);
