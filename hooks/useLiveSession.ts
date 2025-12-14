@@ -80,7 +80,7 @@ export const useLiveSession = ({ apiKey, systemInstruction }: UseLiveSessionProp
       // Start Session
       // Using the standard 'gemini-2.5-flash-native-audio-preview-09-2025' model
       const sessionPromise = aiClientRef.current.live.connect({
-        model: 'gemini-2.5-flash-native-audio-preview-09-2025', 
+        model: 'gemini-2.0-flash-exp', 
         config: {
           responseModalities: [Modality.AUDIO],
           systemInstruction: systemInstruction,
