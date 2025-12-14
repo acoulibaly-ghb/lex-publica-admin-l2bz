@@ -43,18 +43,17 @@ export const useLiveSession = ({ apiKey, systemInstruction }: UseLiveSessionProp
         aiClientRef.current = new GoogleGenAI({ apiKey });
       }
 
-      // Initialisation Audio Contexts
       const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
       inputAudioContextRef.current = new AudioContextClass();
       outputAudioContextRef.current = new AudioContextClass();
 
-      // Resume context (fix iOS/Mac)
       if (inputAudioContextRef.current.state === 'suspended') await inputAudioContextRef.current.resume();
       if (outputAudioContextRef.current.state === 'suspended') await outputAudioContextRef.current.resume();
 
-      // Configuration du modèle
+      // --- LE CHANGEMENT MAGIQUE EST ICI ---
+      // On utilise votre modèle "VIP" optimisé pour la voix (comme l'Appli B)
       const config = {
-        model: 'gemini-2.0-flash-exp',
+        model: 'models/gemini-2.5-flash-preview-tts', 
         generationConfig: {
           responseModalities: "AUDIO" as any, 
           speechConfig: {
@@ -64,13 +63,15 @@ export const useLiveSession = ({ apiKey, systemInstruction }: UseLiveSessionProp
         systemInstruction: { parts: [{ text: systemInstruction }] },
       };
 
-      // Connexion avec callbacks pour satisfaire TypeScript
       const session = await aiClientRef.current.live.connect({
         model: config.model,
         config: config,
         callbacks: {
             onopen: () => console.log("Session opened"),
-            onclose: () => console.log("Session closed"),
+            onclose: () => {
+                console.log("Session closed");
+                setStatus('disconnected');
+            },
             onmessage: () => {}, 
             onerror: (e) => console.error("Session error", e)
         }
@@ -78,7 +79,7 @@ export const useLiveSession = ({ apiKey, systemInstruction }: UseLiveSessionProp
 
       currentSessionRef.current = session;
       setStatus('connected');
-      console.log('Gemini Live Session Connected');
+      console.log('Gemini Live Session Connected (VIP Model)');
 
       // Démarrage du micro
       await startAudioInput();
@@ -120,7 +121,11 @@ export const useLiveSession = ({ apiKey, systemInstruction }: UseLiveSessionProp
       const processor = ctx.createScriptProcessor(4096, 1, 1);
 
       processor.onaudioprocess = (e) => {
-        if (isMuted || !currentSessionRef.current) return;
+        if (isMuted) return;
+        
+        // SÉCURITÉ CRITIQUE : Si la session n'est pas prête, on n'envoie RIEN.
+        // C'est ce qui faisait planter Safari (envoi prématuré).
+        if (!currentSessionRef.current) return;
 
         const inputData = e.inputBuffer.getChannelData(0);
 
@@ -129,28 +134,27 @@ export const useLiveSession = ({ apiKey, systemInstruction }: UseLiveSessionProp
         for (let i = 0; i < inputData.length; i++) sum += inputData[i] * inputData[i];
         setVolumeLevel(Math.min(1, Math.sqrt(sum / inputData.length) * 5));
 
-        // --- LE CORRECTIF ANTI-VAUDOU EST ICI ---
         let dataToProcess: Float32Array = inputData;
-
         if (ctx.sampleRate !== 16000) {
-           // On utilise "as any" pour forcer TypeScript à accepter le buffer redimensionné
-           // C'est brutal mais nécessaire et sans danger ici.
            dataToProcess = downsampleBuffer(inputData, ctx.sampleRate, 16000) as any;
         }
-        // ----------------------------------------
 
-        // Conversion & Envoi
         const pcm16 = floatTo16BitPCM(dataToProcess);
         const base64Data = arrayBufferToBase64(pcm16);
 
-        currentSessionRef.current.send({
-            parts: [{
-                inlineData: {
-                    mimeType: "audio/pcm;rate=16000",
-                    data: base64Data
-                }
-            }]
-        });
+        try {
+            currentSessionRef.current.send({
+                parts: [{
+                    inlineData: {
+                        mimeType: "audio/pcm;rate=16000",
+                        data: base64Data
+                    }
+                }]
+            });
+        } catch (error) {
+            // On ignore les erreurs d'envoi silencieuses pour ne pas crasher l'appli
+            console.warn("Frame drop", error);
+        }
       };
 
       const muteNode = ctx.createGain();
@@ -216,14 +220,11 @@ export const useLiveSession = ({ apiKey, systemInstruction }: UseLiveSessionProp
 
   const disconnect = () => {
     currentSessionRef.current = null;
-    
     if (processorRef.current) { processorRef.current.disconnect(); processorRef.current = null; }
     if (inputSourceRef.current) { inputSourceRef.current.disconnect(); inputSourceRef.current = null; }
     if (streamRef.current) { streamRef.current.getTracks().forEach(t => t.stop()); streamRef.current = null; }
-    
     if (inputAudioContextRef.current) { inputAudioContextRef.current.close(); inputAudioContextRef.current = null; }
     if (outputAudioContextRef.current) { outputAudioContextRef.current.close(); outputAudioContextRef.current = null; }
-
     setStatus('disconnected');
     setVolumeLevel(0);
   };
