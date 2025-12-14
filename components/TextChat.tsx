@@ -30,7 +30,7 @@ export const TextChat: React.FC<TextChatProps> = ({ courseContent, systemInstruc
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [isHelpOpen, setIsHelpOpen] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
-
+ 
   // Rename state
   const [editingSessionId, setEditingSessionId] = useState<string | null>(null);
   const [editTitleInput, setEditTitleInput] = useState('');
