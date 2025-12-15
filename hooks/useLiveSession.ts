@@ -7,7 +7,7 @@ interface UseLiveSessionProps {
   systemInstruction: string;
 }
 
-// Helper: Conversion PCM 16-bit Little Endian
+// Conversion PCM 16-bit Little Endian (Format strict Google)
 function floatTo16BitPCM(input: Float32Array): ArrayBuffer {
   const output = new DataView(new ArrayBuffer(input.length * 2));
   for (let i = 0; i < input.length; i++) {
@@ -43,7 +43,7 @@ export const useLiveSession = ({ apiKey, systemInstruction }: UseLiveSessionProp
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // --- LOGIQUE DE RÉCEPTION (Déplacée ici pour être accessible au callback) ---
+  // --- LOGIQUE DE RÉCEPTION ---
   const processServerMessage = (message: LiveServerMessage) => {
     const serverContent = message.serverContent;
 
@@ -56,9 +56,8 @@ export const useLiveSession = ({ apiKey, systemInstruction }: UseLiveSessionProp
     // 2. Gestion de l'interruption
     if (serverContent?.interrupted) {
         console.log("Interruption par l'IA");
-        audioQueueRef.current = []; // Vider la queue locale si on en avait une
+        audioQueueRef.current = [];
         if(outputAudioContextRef.current) {
-            // "Reset" rapide du contexte audio pour couper la parole
             outputAudioContextRef.current.suspend().then(() => outputAudioContextRef.current?.resume());
             nextStartTimeRef.current = outputAudioContextRef.current.currentTime;
         }
@@ -82,28 +81,26 @@ export const useLiveSession = ({ apiKey, systemInstruction }: UseLiveSessionProp
       if (inputAudioContextRef.current.state === 'suspended') await inputAudioContextRef.current.resume();
       if (outputAudioContextRef.current.state === 'suspended') await outputAudioContextRef.current.resume();
 
-      // CONNEXION AVEC CALLBACKS (Architecture Événementielle)
+      // --- CONFIGURATION CORRIGÉE (APLATIE) ---
       const session = await aiClientRef.current.live.connect({
         model: 'gemini-2.0-flash-exp',
         config: {
-          generationConfig: {
-            responseModalities: "AUDIO" as any,
-            speechConfig: {
-              voiceConfig: { prebuiltVoiceConfig: { voiceName: 'Kore' } },
-            },
+          // CORRECTION : On a retiré "generationConfig" et mis les propriétés directement à la racine
+          responseModalities: "AUDIO" as any, 
+          speechConfig: {
+            voiceConfig: { prebuiltVoiceConfig: { voiceName: 'Kore' } },
           },
           systemInstruction: { parts: [{ text: systemInstruction }] },
         },
         callbacks: {
             onopen: () => {
-                console.log("✅ Session opened (Callback)");
+                console.log("✅ Session opened (Audio Enabled)");
                 setStatus('connected');
             },
             onclose: () => {
-                console.log("❌ Session closed (Callback)");
+                console.log("❌ Session closed");
                 setStatus('disconnected');
             },
-            // C'EST ICI QUE TOUT SE JOUE : On reçoit le message directement
             onmessage: (msg: LiveServerMessage) => {
                 processServerMessage(msg);
             },
@@ -115,14 +112,9 @@ export const useLiveSession = ({ apiKey, systemInstruction }: UseLiveSessionProp
       });
 
       currentSessionRef.current = session;
-      // Note: setStatus('connected') est aussi géré dans onopen, mais on le garde ici par sécurité
-      console.log('Gemini Live Session Object Created');
+      console.log('Gemini Live Session Configured Correctly');
 
-      // Démarrage micro
       await startAudioInput();
-
-      // IMPORTANT : On a SUPPRIMÉ l'appel à listenToIncomingMessages()
-      // Plus de boucle "for await", plus de crash "not async iterable".
 
     } catch (error) {
       console.error('Connection failed:', error);
@@ -179,7 +171,7 @@ export const useLiveSession = ({ apiKey, systemInstruction }: UseLiveSessionProp
                 endOfTurn: false
             });
         } catch (error) {
-            // Silence en cas d'erreur d'envoi ponctuelle
+            // Silence
         }
       };
 
