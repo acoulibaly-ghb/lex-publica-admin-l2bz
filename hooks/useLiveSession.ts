@@ -7,7 +7,7 @@ interface UseLiveSessionProps {
   systemInstruction: string;
 }
 
-// Conversion PCM 16-bit Little Endian
+// Helper: Conversion PCM 16-bit Little Endian
 function floatTo16BitPCM(input: Float32Array): ArrayBuffer {
   const output = new DataView(new ArrayBuffer(input.length * 2));
   for (let i = 0; i < input.length; i++) {
@@ -23,14 +23,20 @@ export const useLiveSession = ({ apiKey, systemInstruction }: UseLiveSessionProp
   const [isMuted, setIsMuted] = useState(false);
   const [volumeLevel, setVolumeLevel] = useState(0);
 
+  // Audio Contexts
   const inputAudioContextRef = useRef<AudioContext | null>(null);
   const outputAudioContextRef = useRef<AudioContext | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const processorRef = useRef<ScriptProcessorNode | null>(null);
   const inputSourceRef = useRef<MediaStreamAudioSourceNode | null>(null);
+  
+  // Gemini Client
   const aiClientRef = useRef<GoogleGenAI | null>(null);
   const currentSessionRef = useRef<any>(null);
+  
+  // Playback Logic
   const nextStartTimeRef = useRef<number>(0);
+  const audioQueueRef = useRef<AudioBuffer[]>([]);
 
   useEffect(() => {
     return () => disconnect();
@@ -43,15 +49,17 @@ export const useLiveSession = ({ apiKey, systemInstruction }: UseLiveSessionProp
 
     // 1. Réception audio
     if (serverContent?.modelTurn?.parts?.[0]?.inlineData?.data) {
-        console.log("📥 [REÇU] Paquet audio reçu du serveur Google !");
+        // Le serveur nous envoie de l'audio !
+        console.log("📥 [REÇU] Paquet audio reçu !");
         const base64Audio = serverContent.modelTurn.parts[0].inlineData.data;
         playAudioChunk(base64Audio);
     }
 
     // 2. Gestion de l'interruption
     if (serverContent?.interrupted) {
-        console.log("⏸️ [INTERRUPTION] L'IA s'arrête de parler.");
+        console.log("⏸️ [INTERRUPTION] L'IA s'arrête.");
         if(outputAudioContextRef.current) {
+            outputAudioContextRef.current.suspend().then(() => outputAudioContextRef.current?.resume());
             nextStartTimeRef.current = outputAudioContextRef.current.currentTime;
         }
     }
@@ -71,19 +79,15 @@ export const useLiveSession = ({ apiKey, systemInstruction }: UseLiveSessionProp
       inputAudioContextRef.current = new AudioContextClass();
       outputAudioContextRef.current = new AudioContextClass();
 
-      // FORCER LE RÉVEIL DES CONTEXTES AUDIO (Crucial pour Chrome/Safari)
-      if (inputAudioContextRef.current.state === 'suspended') {
-          await inputAudioContextRef.current.resume();
-          console.log("🎤 Input Audio Context Resumed");
-      }
-      if (outputAudioContextRef.current.state === 'suspended') {
-          await outputAudioContextRef.current.resume();
-          console.log("🔊 Output Audio Context Resumed");
-      }
+      // Forçage du démarrage audio (Contournement autoplay)
+      if (inputAudioContextRef.current.state === 'suspended') await inputAudioContextRef.current.resume();
+      if (outputAudioContextRef.current.state === 'suspended') await outputAudioContextRef.current.resume();
 
+      // --- CONFIGURATION OPTIMISÉE ---
       const session = await aiClientRef.current.live.connect({
         model: 'gemini-2.0-flash-exp',
         config: {
+          // Configuration sortie de "generationConfig" pour être vue par Google
           responseModalities: "AUDIO" as any, 
           speechConfig: {
             voiceConfig: { prebuiltVoiceConfig: { voiceName: 'Kore' } },
@@ -92,19 +96,9 @@ export const useLiveSession = ({ apiKey, systemInstruction }: UseLiveSessionProp
         },
         callbacks: {
             onopen: () => {
-                console.log("✅ [CONNEXION] Session ouverte avec succès.");
+                console.log("✅ [CONNEXION] Session ouverte. En attente de votre voix...");
                 setStatus('connected');
-                
-                // Ping de réveil après 1 seconde
-                setTimeout(() => {
-                    if(currentSessionRef.current) {
-                        console.log("📨 [ENVOI] Envoi du message de réveil 'Bonjour'...");
-                        currentSessionRef.current.send({
-                            parts: [{ text: "Bonjour ! Présente-toi brièvement." }],
-                            endOfTurn: true
-                        });
-                    }
-                }, 1000);
+                // PAS de send() ici pour éviter le crash
             },
             onclose: () => {
                 console.log("❌ [CONNEXION] Session fermée.");
@@ -114,7 +108,7 @@ export const useLiveSession = ({ apiKey, systemInstruction }: UseLiveSessionProp
                 processServerMessage(msg);
             },
             onerror: (e) => {
-                console.error("⚠️ [ERREUR] Session error:", e);
+                console.error("⚠️ [ERREUR] Session error", e);
                 setStatus('error');
             }
         }
@@ -148,22 +142,17 @@ export const useLiveSession = ({ apiKey, systemInstruction }: UseLiveSessionProp
 
       processor.onaudioprocess = (e) => {
         if (isMuted) return;
+        // Sécurité anti-crash
         if (!currentSessionRef.current) return;
 
         const inputData = e.inputBuffer.getChannelData(0);
 
-        // Visualizer (Preuve que le micro marche)
+        // Visualizer
         let sum = 0;
         for (let i = 0; i < inputData.length; i++) sum += inputData[i] * inputData[i];
-        const vol = Math.min(1, Math.sqrt(sum / inputData.length) * 5);
-        setVolumeLevel(vol);
-        
-        // Log périodique pour vérifier que le micro envoie bien (toutes les ~2 secondes)
-        if (Math.random() < 0.05 && vol > 0.01) {
-            console.log("🎤 [MICRO] Envoi de données audio vers Google...");
-        }
+        setVolumeLevel(Math.min(1, Math.sqrt(sum / inputData.length) * 5));
 
-        // Downsample & Send
+        // Downsample
         let dataToProcess: Float32Array = inputData;
         if (ctx.sampleRate !== 16000) {
            dataToProcess = downsampleBuffer(inputData, ctx.sampleRate, 16000) as any;
@@ -183,7 +172,7 @@ export const useLiveSession = ({ apiKey, systemInstruction }: UseLiveSessionProp
                 endOfTurn: false
             });
         } catch (error) {
-            // Silence
+            // Silence en cas d'erreur réseau ponctuelle
         }
       };
 
@@ -205,41 +194,35 @@ export const useLiveSession = ({ apiKey, systemInstruction }: UseLiveSessionProp
       if (!outputAudioContextRef.current) return;
       const ctx = outputAudioContextRef.current;
       
-      // Vérification de l'état du contexte audio
-      if (ctx.state === 'suspended') {
-          console.warn("⚠️ [AUDIO OUT] Le contexte audio est suspendu ! Tentative de reprise...");
-          await ctx.resume();
-      }
+      // Sécurité anti-autoplay : On réactive si Chrome a suspendu
+      if (ctx.state === 'suspended') await ctx.resume();
 
       try {
-          const binaryString = window.atob(base64Audio);
-          const len = binaryString.length;
-          const bytes = new Uint8Array(len);
-          for (let i = 0; i < len; i++) bytes[i] = binaryString.charCodeAt(i);
-          
-          const pcm16 = new Int16Array(bytes.buffer);
-          const float32 = new Float32Array(pcm16.length);
-          for(let i=0; i<pcm16.length; i++) float32[i] = pcm16[i] / 32768;
+        const binaryString = window.atob(base64Audio);
+        const len = binaryString.length;
+        const bytes = new Uint8Array(len);
+        for (let i = 0; i < len; i++) bytes[i] = binaryString.charCodeAt(i);
+        
+        const pcm16 = new Int16Array(bytes.buffer);
+        const float32 = new Float32Array(pcm16.length);
+        for(let i=0; i<pcm16.length; i++) float32[i] = pcm16[i] / 32768;
 
-          const audioBuffer = ctx.createBuffer(1, float32.length, 24000); 
-          audioBuffer.copyToChannel(float32, 0);
+        const audioBuffer = ctx.createBuffer(1, float32.length, 24000); 
+        audioBuffer.copyToChannel(float32, 0);
 
-          const source = ctx.createBufferSource();
-          source.buffer = audioBuffer;
-          source.connect(ctx.destination);
-          
-          const currentTime = ctx.currentTime;
-          if (nextStartTimeRef.current < currentTime) {
-              nextStartTimeRef.current = currentTime + 0.05;
-          }
-          
-          source.start(nextStartTimeRef.current);
-          nextStartTimeRef.current += audioBuffer.duration;
-          
-          console.log(`🔊 [AUDIO OUT] Lecture d'un chunk de ${audioBuffer.duration.toFixed(2)}s`);
-
+        const source = ctx.createBufferSource();
+        source.buffer = audioBuffer;
+        source.connect(ctx.destination);
+        
+        const currentTime = ctx.currentTime;
+        if (nextStartTimeRef.current < currentTime) {
+            nextStartTimeRef.current = currentTime + 0.05;
+        }
+        
+        source.start(nextStartTimeRef.current);
+        nextStartTimeRef.current += audioBuffer.duration;
       } catch (err) {
-          console.error("❌ [AUDIO OUT] Erreur lors du décodage/lecture :", err);
+        console.error("Audio decoding error", err);
       }
   };
 
