@@ -83,7 +83,7 @@ export const useLiveSession = ({ apiKey, systemInstruction }: UseLiveSessionProp
 
       // --- CONFIGURATION CORRIGÉE (APLATIE) ---
       const session = await aiClientRef.current.live.connect({
-        model: 'gemini-2.0-flash-exp',
+        model: 'gemini-2.5-flash-native-audio-preview-09-2025',
         config: {
           // CORRECTION : On a retiré "generationConfig" et mis les propriétés directement à la racine
           responseModalities: "AUDIO" as any, 
