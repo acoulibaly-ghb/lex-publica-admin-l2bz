@@ -121,6 +121,7 @@ export const useLiveSession = ({ apiKey, systemInstruction }) => {
         
         // 3. Handshake (Envoi de la configuration)
        // 3. Handshake (Configuration optimisée "Professeur Français")
+        // 3. Handshake (Tentative "Charon" + Anti-Épellation)
         const setupMessage = {
             setup: {
                 model: "models/gemini-2.0-flash-exp",
@@ -129,16 +130,15 @@ export const useLiveSession = ({ apiKey, systemInstruction }) => {
                     speech_config: {
                         voice_config: { 
                             prebuilt_voice_config: { 
-                                // On passe à AOEDE : plus mature, plus posée.
-                                voice_name: "Aoede" 
+                                // CHARON : Voix masculine, grave, souvent plus stable.
+                                voice_name: "Charon" 
                             } 
                         }
                     }
                 },
                 system_instruction: { 
                     parts: [{ 
-                        // On force le trait sur l'identité et l'accent
-                        text: systemInstruction + " IMPORTANT : Tu es une éminente professeure de droit public française. Ton ton est calme, académique, posé et bienveillant. Tu n'es pas une assistante IA surexcitée. Tu parles un français impeccable, sans anglicismes, avec une élocution lente et articulée. Ne sois pas 'déjantée', sois professionnelle." 
+                        text: systemInstruction + " CRITIQUE : Tu es un professeur de droit français masculin. Tu parles PARFAITEMENT français. Interdiction formelle d'avoir un accent anglais. Prononce 'ou' comme un mot, ne l'épelle jamais 'o-u'. Lie les mots entre eux (liaison). Ton élocution doit être fluide, native et naturelle. Si tu ne peux pas prononcer un mot correctement, reformule." 
                     }] 
                 }
             }
