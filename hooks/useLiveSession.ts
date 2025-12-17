@@ -7,7 +7,7 @@ interface UseLiveSessionProps {
   systemInstruction: string;
 }
 
-// Fonction de conversion PCM 16-bit Little Endian
+// test Fonction de conversion PCM 16-bit Little Endian
 function floatTo16BitPCM(input: Float32Array): ArrayBuffer {
   const output = new DataView(new ArrayBuffer(input.length * 2));
   for (let i = 0; i < input.length; i++) {
