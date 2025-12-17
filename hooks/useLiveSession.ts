@@ -120,16 +120,27 @@ export const useLiveSession = ({ apiKey, systemInstruction }) => {
         console.log("✅ [SOCKET] Connecté au serveur Google.");
         
         // 3. Handshake (Envoi de la configuration)
+       // 3. Handshake (Configuration optimisée "Professeur Français")
         const setupMessage = {
             setup: {
                 model: "models/gemini-2.0-flash-exp",
                 generation_config: {
                     response_modalities: ["AUDIO"],
                     speech_config: {
-                        voice_config: { prebuilt_voice_config: { voice_name: "Kore" } }
+                        voice_config: { 
+                            prebuilt_voice_config: { 
+                                // On passe à AOEDE : plus mature, plus posée.
+                                voice_name: "Aoede" 
+                            } 
+                        }
                     }
                 },
-                system_instruction: { parts: [{ text: systemInstruction }] }
+                system_instruction: { 
+                    parts: [{ 
+                        // On force le trait sur l'identité et l'accent
+                        text: systemInstruction + " IMPORTANT : Tu es une éminente professeure de droit public française. Ton ton est calme, académique, posé et bienveillant. Tu n'es pas une assistante IA surexcitée. Tu parles un français impeccable, sans anglicismes, avec une élocution lente et articulée. Ne sois pas 'déjantée', sois professionnelle." 
+                    }] 
+                }
             }
         };
         ws.send(JSON.stringify(setupMessage));
