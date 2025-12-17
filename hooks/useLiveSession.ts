@@ -1,10 +1,87 @@
-// ... (début de la fonction connect inchangé)
+import { useState, useRef, useEffect } from 'react';
+import { GoogleGenAI, LiveServerMessage } from '@google/genai';
+import { downsampleBuffer, arrayBufferToBase64 } from '../services/audioUtils';
 
-      // 1. On établit la connexion
-      const session = await aiClientRef.current.live.connect({
+interface UseLiveSessionProps {
+  apiKey: string;
+  systemInstruction: string;
+}
+
+// Fonction de conversion PCM 16-bit Little Endian
+function floatTo16BitPCM(input: Float32Array): ArrayBuffer {
+  const output = new DataView(new ArrayBuffer(input.length * 2));
+  for (let i = 0; i < input.length; i++) {
+    const s = Math.max(-1, Math.min(1, input[i]));
+    const val = s < 0 ? s * 0x8000 : s * 0x7FFF;
+    output.setInt16(i * 2, val, true);
+  }
+  return output.buffer;
+}
+
+export const useLiveSession = ({ apiKey, systemInstruction }: UseLiveSessionProps) => {
+  const [status, setStatus] = useState<'disconnected' | 'connecting' | 'connected' | 'error'>('disconnected');
+  const [isMuted, setIsMuted] = useState(false);
+  const [volumeLevel, setVolumeLevel] = useState(0);
+
+  // Audio Contexts
+  const inputAudioContextRef = useRef<AudioContext | null>(null);
+  const outputAudioContextRef = useRef<AudioContext | null>(null);
+  const streamRef = useRef<MediaStream | null>(null);
+  const processorRef = useRef<ScriptProcessorNode | null>(null);
+  const inputSourceRef = useRef<MediaStreamAudioSourceNode | null>(null);
+  
+  // Clients AI
+  const aiClientRef = useRef<GoogleGenAI | null>(null);
+  const currentSessionRef = useRef<any>(null);
+  
+  // Audio Queue
+  const nextStartTimeRef = useRef<number>(0);
+
+  useEffect(() => {
+    return () => disconnect();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // --- LOGIQUE DE RÉCEPTION ---
+  const processServerMessage = (message: LiveServerMessage) => {
+    const serverContent = message.serverContent;
+
+    if (serverContent?.modelTurn?.parts?.[0]?.inlineData?.data) {
+        console.log("📥 [REÇU] Paquet audio reçu ! (L'IA parle)");
+        const base64Audio = serverContent.modelTurn.parts[0].inlineData.data;
+        playAudioChunk(base64Audio);
+    }
+
+    if (serverContent?.interrupted) {
+        console.log("⏸️ [INTERRUPTION] L'IA s'arrête.");
+        if(outputAudioContextRef.current) {
+            outputAudioContextRef.current.suspend().then(() => outputAudioContextRef.current?.resume());
+            nextStartTimeRef.current = outputAudioContextRef.current.currentTime;
+        }
+    }
+  };
+
+  const connect = async () => {
+    if (status === 'connected' || status === 'connecting') return;
+    setStatus('connecting');
+
+    try {
+      if (!aiClientRef.current) {
+        aiClientRef.current = new GoogleGenAI({ apiKey });
+      }
+
+      const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
+      inputAudioContextRef.current = new AudioContextClass();
+      outputAudioContextRef.current = new AudioContextClass();
+
+      if (inputAudioContextRef.current.state === 'suspended') await inputAudioContextRef.current.resume();
+      if (outputAudioContextRef.current.state === 'suspended') await outputAudioContextRef.current.resume();
+
+      // --- CONFIGURATION BLINDÉE (Type 'any' pour éviter l'erreur de build Vercel) ---
+      const hostConfig: any = {
         model: 'gemini-2.0-flash-exp',
         config: {
-          responseModalities: "AUDIO" as any,
+          responseModalities: "AUDIO", // Google veut ça ici
           speechConfig: {
             voiceConfig: { prebuiltVoiceConfig: { voiceName: 'Kore' } },
           },
@@ -22,24 +99,34 @@
             onmessage: (msg: LiveServerMessage) => {
                 processServerMessage(msg);
             },
-            onerror: (e) => {
+            onerror: (e: any) => {
                 console.error("⚠️ [ERREUR] Session error", e);
                 setStatus('error');
             }
         }
-      });
+      };
 
-      // 2. ON SAUVEGARDE LA SESSION (C'est là que ça plantait avant)
+      // Connexion avec la config qui force le passage
+      const session = await aiClientRef.current.live.connect(hostConfig);
+
       currentSessionRef.current = session;
       
-      // 3. LE PING DE RÉVEIL (Maintenant c'est sûr, la session existe !)
-      console.log("📨 [TEST] Envoi du message texte 'Bonjour' pour forcer l'audio...");
-      await session.send({
-          parts: [{ text: "Bonjour ! Confirme-moi que tu m'entends." }],
-          endOfTurn: true
-      });
+      // --- LE PING DE RÉVEIL ---
+      setTimeout(async () => {
+          console.log("📨 [TEST] Tentative d'envoi du message 'Bonjour'...");
+          try {
+              if (currentSessionRef.current) {
+                  await currentSessionRef.current.send({
+                      parts: [{ text: "Bonjour Ada ! Présente-toi brièvement." }],
+                      endOfTurn: true
+                  });
+                  console.log("📨 [TEST] Message envoyé !");
+              }
+          } catch (err) {
+              console.error("❌ [TEST] Échec de l'envoi :", err);
+          }
+      }, 1000);
 
-      // 4. On active le micro
       await startAudioInput();
 
     } catch (error) {
@@ -48,3 +135,119 @@
       disconnect();
     }
   };
+
+  const startAudioInput = async () => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          channelCount: 1,
+          echoCancellation: true,
+          noiseSuppression: true,
+          sampleRate: 16000
+        }
+      });
+      streamRef.current = stream;
+
+      const ctx = inputAudioContextRef.current!;
+      const source = ctx.createMediaStreamSource(stream);
+      const processor = ctx.createScriptProcessor(4096, 1, 1);
+
+      processor.onaudioprocess = (e) => {
+        if (isMuted) return;
+        if (!currentSessionRef.current) return;
+
+        const inputData = e.inputBuffer.getChannelData(0);
+
+        // Visualizer
+        let sum = 0;
+        for (let i = 0; i < inputData.length; i++) sum += inputData[i] * inputData[i];
+        setVolumeLevel(Math.min(1, Math.sqrt(sum / inputData.length) * 5));
+
+        // Downsample
+        let dataToProcess: Float32Array = inputData;
+        if (ctx.sampleRate !== 16000) {
+           dataToProcess = downsampleBuffer(inputData, ctx.sampleRate, 16000) as any;
+        }
+
+        const pcm16 = floatTo16BitPCM(dataToProcess);
+        const base64Data = arrayBufferToBase64(pcm16);
+
+        try {
+            currentSessionRef.current.send({
+                parts: [{
+                    inlineData: {
+                        mimeType: "audio/pcm;rate=16000",
+                        data: base64Data
+                    }
+                }],
+                endOfTurn: false
+            });
+        } catch (error) {
+            // Silence
+        }
+      };
+
+      const muteNode = ctx.createGain();
+      muteNode.gain.value = 0;
+      source.connect(processor);
+      processor.connect(muteNode);
+      muteNode.connect(ctx.destination);
+
+      inputSourceRef.current = source;
+      processorRef.current = processor;
+
+    } catch (e) {
+      console.error("Microphone error:", e);
+    }
+  };
+
+  const playAudioChunk = async (base64Audio: string) => {
+      if (!outputAudioContextRef.current) return;
+      const ctx = outputAudioContextRef.current;
+      
+      if (ctx.state === 'suspended') await ctx.resume();
+
+      try {
+        const binaryString = window.atob(base64Audio);
+        const len = binaryString.length;
+        const bytes = new Uint8Array(len);
+        for (let i = 0; i < len; i++) bytes[i] = binaryString.charCodeAt(i);
+        
+        const pcm16 = new Int16Array(bytes.buffer);
+        const float32 = new Float32Array(pcm16.length);
+        for(let i=0; i<pcm16.length; i++) float32[i] = pcm16[i] / 32768;
+
+        const audioBuffer = ctx.createBuffer(1, float32.length, 24000); 
+        audioBuffer.copyToChannel(float32, 0);
+
+        const source = ctx.createBufferSource();
+        source.buffer = audioBuffer;
+        source.connect(ctx.destination);
+        
+        const currentTime = ctx.currentTime;
+        if (nextStartTimeRef.current < currentTime) {
+            nextStartTimeRef.current = currentTime + 0.05;
+        }
+        
+        source.start(nextStartTimeRef.current);
+        nextStartTimeRef.current += audioBuffer.duration;
+      } catch (err) {
+        console.error("Audio decoding error", err);
+      }
+  };
+
+  const disconnect = () => {
+    currentSessionRef.current = null;
+    if (processorRef.current) { processorRef.current.disconnect(); processorRef.current = null; }
+    if (inputSourceRef.current) { inputSourceRef.current.disconnect(); inputSourceRef.current = null; }
+    if (streamRef.current) { streamRef.current.getTracks().forEach(t => t.stop()); streamRef.current = null; }
+    if (inputAudioContextRef.current) { inputAudioContextRef.current.close(); inputAudioContextRef.current = null; }
+    if (outputAudioContextRef.current) { outputAudioContextRef.current.close(); outputAudioContextRef.current = null; }
+    setStatus('disconnected');
+    setVolumeLevel(0);
+  };
+
+  const toggleMute = () => setIsMuted(p => !p);
+
+  return { status, connect, disconnect, isMuted, toggleMute, volumeLevel };
+};
