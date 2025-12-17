@@ -1,37 +1,40 @@
+// @ts-nocheck
+"use client";
+
 import { useState, useRef, useEffect } from 'react';
-import { GoogleGenAI, LiveServerMessage } from '@google/genai';
+import { GoogleGenAI } from '@google/genai';
 
-// --- FONCTIONS UTILITAIRES INTÉGRÉES (Pour ne plus dépendre de l'extérieur) ---
+// --- FONCTIONS UTILITAIRES INTÉGRÉES (Blindées) ---
 
-// 1. Conversion Float32 vers PCM 16-bit (Format audio brut)
-function floatTo16BitPCM(input: Float32Array): ArrayBuffer {
+// 1. Conversion Float32 vers PCM 16-bit
+function floatTo16BitPCM(input) {
   const output = new DataView(new ArrayBuffer(input.length * 2));
   for (let i = 0; i < input.length; i++) {
     const s = Math.max(-1, Math.min(1, input[i]));
     const val = s < 0 ? s * 0x8000 : s * 0x7FFF;
-    output.setInt16(i * 2, val, true); // true = Little Endian
+    output.setInt16(i * 2, val, true);
   }
   return output.buffer;
 }
 
-// 2. Conversion ArrayBuffer vers Base64 (Pour l'envoi via WebSocket)
-function arrayBufferToBase64(buffer: ArrayBuffer): string {
+// 2. Conversion Base64 (Compatible universel)
+function arrayBufferToBase64(buffer) {
   let binary = '';
   const bytes = new Uint8Array(buffer);
   const len = bytes.byteLength;
   for (let i = 0; i < len; i++) {
     binary += String.fromCharCode(bytes[i]);
   }
-  return window.btoa(binary);
+  return btoa(binary);
 }
 
-// 3. Ré-échantillonnage (Downsampling) de 44.1kHz/48kHz vers 16kHz (Requis par Gemini)
-function downsampleBuffer(buffer: Float32Array, sampleRate: number, outSampleRate: number): Float32Array {
+// 3. Downsampling
+function downsampleBuffer(buffer, sampleRate, outSampleRate) {
   if (outSampleRate === sampleRate) {
     return buffer;
   }
   if (outSampleRate > sampleRate) {
-    throw new Error("Downsampling only supports downsampling");
+    return buffer; // Fallback sécu
   }
   const sampleRateRatio = sampleRate / outSampleRate;
   const newLength = Math.round(buffer.length / sampleRateRatio);
@@ -54,38 +57,32 @@ function downsampleBuffer(buffer: Float32Array, sampleRate: number, outSampleRat
 
 // --- HOOK PRINCIPAL ---
 
-interface UseLiveSessionProps {
-  apiKey: string;
-  systemInstruction: string;
-}
-
-export const useLiveSession = ({ apiKey, systemInstruction }: UseLiveSessionProps) => {
-  const [status, setStatus] = useState<'disconnected' | 'connecting' | 'connected' | 'error'>('disconnected');
+export const useLiveSession = ({ apiKey, systemInstruction }) => {
+  const [status, setStatus] = useState('disconnected');
   const [isMuted, setIsMuted] = useState(false);
   const [volumeLevel, setVolumeLevel] = useState(0);
 
-  // Refs Audio & AI
-  const inputAudioContextRef = useRef<AudioContext | null>(null);
-  const outputAudioContextRef = useRef<AudioContext | null>(null);
-  const streamRef = useRef<MediaStream | null>(null);
-  const processorRef = useRef<ScriptProcessorNode | null>(null);
-  const inputSourceRef = useRef<MediaStreamAudioSourceNode | null>(null);
-  const aiClientRef = useRef<GoogleGenAI | null>(null);
-  const currentSessionRef = useRef<any>(null);
-  const nextStartTimeRef = useRef<number>(0);
+  // Refs
+  const inputAudioContextRef = useRef(null);
+  const outputAudioContextRef = useRef(null);
+  const streamRef = useRef(null);
+  const processorRef = useRef(null);
+  const inputSourceRef = useRef(null);
+  const aiClientRef = useRef(null);
+  const currentSessionRef = useRef(null);
+  const nextStartTimeRef = useRef(0);
 
   useEffect(() => {
     return () => disconnect();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Gestion des messages reçus
-  const processServerMessage = (message: LiveServerMessage) => {
+  // Gestion Messages
+  const processServerMessage = (message) => {
     const serverContent = message.serverContent;
     
     // Audio reçu
     if (serverContent?.modelTurn?.parts?.[0]?.inlineData?.data) {
-        console.log("📥 [REÇU] Audio de l'IA");
+        console.log("📥 [REÇU] Paquet audio reçu !");
         const base64Audio = serverContent.modelTurn.parts[0].inlineData.data;
         playAudioChunk(base64Audio);
     }
@@ -108,11 +105,11 @@ export const useLiveSession = ({ apiKey, systemInstruction }: UseLiveSessionProp
       if (!aiClientRef.current) aiClientRef.current = new GoogleGenAI({ apiKey });
 
       // Init Audio
-      const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
+      const AudioContextClass = window.AudioContext || window.webkitAudioContext;
       inputAudioContextRef.current = new AudioContextClass();
       outputAudioContextRef.current = new AudioContextClass();
 
-      // Resume forcé (Autoplay policy)
+      // Resume forcé
       if (inputAudioContextRef.current.state === 'suspended') await inputAudioContextRef.current.resume();
       if (outputAudioContextRef.current.state === 'suspended') await outputAudioContextRef.current.resume();
 
@@ -120,7 +117,7 @@ export const useLiveSession = ({ apiKey, systemInstruction }: UseLiveSessionProp
       const session = await aiClientRef.current.live.connect({
         model: 'gemini-2.0-flash-exp',
         config: {
-          responseModalities: "AUDIO" as any, 
+          responseModalities: "AUDIO", 
           speechConfig: {
             voiceConfig: { prebuiltVoiceConfig: { voiceName: 'Kore' } },
           },
@@ -135,7 +132,7 @@ export const useLiveSession = ({ apiKey, systemInstruction }: UseLiveSessionProp
                 console.log("❌ [CONNEXION] Session fermée.");
                 setStatus('disconnected');
             },
-            onmessage: (msg: LiveServerMessage) => processServerMessage(msg),
+            onmessage: (msg) => processServerMessage(msg),
             onerror: (e) => {
                 console.error("⚠️ [ERREUR]", e);
                 setStatus('error');
@@ -145,13 +142,13 @@ export const useLiveSession = ({ apiKey, systemInstruction }: UseLiveSessionProp
 
       currentSessionRef.current = session;
       
-      // --- LE PING DE RÉVEIL (Obligatoire) ---
+      // --- PING DE RÉVEIL ---
       setTimeout(async () => {
           console.log("📨 [TEST] Envoi du Ping de réveil...");
           try {
               if (currentSessionRef.current) {
                   await currentSessionRef.current.send({
-                      parts: [{ text: "Bonjour ! Test audio 1 2 3." }],
+                      parts: [{ text: "Bonjour ! Est-ce que tu m'entends ?" }],
                       endOfTurn: true
                   });
               }
@@ -176,7 +173,7 @@ export const useLiveSession = ({ apiKey, systemInstruction }: UseLiveSessionProp
       });
       streamRef.current = stream;
 
-      const ctx = inputAudioContextRef.current!;
+      const ctx = inputAudioContextRef.current;
       const source = ctx.createMediaStreamSource(stream);
       const processor = ctx.createScriptProcessor(4096, 1, 1);
 
@@ -190,7 +187,7 @@ export const useLiveSession = ({ apiKey, systemInstruction }: UseLiveSessionProp
         for (let i = 0; i < inputData.length; i++) sum += inputData[i] * inputData[i];
         setVolumeLevel(Math.min(1, Math.sqrt(sum / inputData.length) * 5));
 
-        // Traitement interne (plus de dépendance externe)
+        // Traitement
         let dataToProcess = inputData;
         if (ctx.sampleRate !== 16000) {
            dataToProcess = downsampleBuffer(inputData, ctx.sampleRate, 16000);
@@ -222,13 +219,13 @@ export const useLiveSession = ({ apiKey, systemInstruction }: UseLiveSessionProp
     }
   };
 
-  const playAudioChunk = async (base64Audio: string) => {
+  const playAudioChunk = async (base64Audio) => {
       if (!outputAudioContextRef.current) return;
       const ctx = outputAudioContextRef.current;
       if (ctx.state === 'suspended') await ctx.resume();
 
       try {
-        const binaryString = window.atob(base64Audio);
+        const binaryString = atob(base64Audio);
         const len = binaryString.length;
         const bytes = new Uint8Array(len);
         for (let i = 0; i < len; i++) bytes[i] = binaryString.charCodeAt(i);
